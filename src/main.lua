@@ -17,9 +17,10 @@ local function fetch(path)
 end
 
 -- libraries first
-local UI       = fetch("src/library/ui.lua")
-local Notify   = fetch("src/library/notify.lua")
-local Config   = fetch("src/config.lua")
+local UI          = fetch("src/library/ui.lua")
+local Notify      = fetch("src/library/notify.lua")
+local SaveManager = fetch("src/library/savemanager.lua")
+local Config      = fetch("src/config.lua")
 
 -- shared utilities
 local PlayersUtil = fetch("src/utils/players.lua")
@@ -48,14 +49,15 @@ local Window = UI:CreateWindow({
 })
 
 local ctx = {
-    UI       = UI,
-    Window   = Window,
-    Notify   = Notify,
-    Config   = Config,
-    Players  = PlayersUtil,
-    Drawing  = Drawing,
-    Env      = Env,
-    Aimbot   = Aimbot,
+    UI          = UI,
+    Window      = Window,
+    Notify      = Notify,
+    Config      = Config,
+    SaveManager = SaveManager,
+    Players     = PlayersUtil,
+    Drawing     = Drawing,
+    Env         = Env,
+    Aimbot      = Aimbot,
 }
 
 -- Aimbot first so HUD can read its LockedTarget through ctx.
@@ -89,6 +91,31 @@ end)
 
 local themeSection = SettingsTab:AddSection("Theme")
 themeSection:AddColorPicker("Accent color", UI.Theme.Accent, function(c) Window:SetAccent(c) end)
+
+local profilesSection = SettingsTab:AddSection("Profiles (named configs)")
+local profileName = "default"
+profilesSection:AddTextBox("Profile name", "default", function(v) profileName = v ~= "" and v or "default" end)
+profilesSection:AddButton("Save profile", function()
+    local ok, info = SaveManager.Save(profileName)
+    Notify:Send("Profile", ok and ("Saved " .. profileName) or ("Save failed: " .. tostring(info)), 3)
+end)
+profilesSection:AddButton("Load profile", function()
+    local ok, info = SaveManager.Load(profileName)
+    Notify:Send("Profile", ok and ("Loaded " .. profileName) or ("Load failed: " .. tostring(info)), 3)
+end)
+profilesSection:AddButton("Delete profile", function()
+    if SaveManager.Delete(profileName) then
+        Notify:Send("Profile", "Deleted " .. profileName, 3)
+    end
+end)
+profilesSection:AddButton("Set as autoload", function()
+    SaveManager.SetAutoload(profileName)
+    Notify:Send("Profile", "Will autoload " .. profileName, 3)
+end)
+profilesSection:AddButton("Clear autoload", function()
+    SaveManager.SetAutoload(nil)
+    Notify:Send("Profile", "Autoload cleared", 3)
+end)
 
 local infoSection = SettingsTab:AddSection("About")
 infoSection:AddLabel("ROGBLOX — pro Roblox cheat hub")
@@ -126,5 +153,9 @@ _G.ROGBLOX = {
     end,
 }
 
-Notify:Send("ROGBLOX", "v0.3.0 loaded — press RightCtrl to toggle UI", 4)
+Notify:Send("ROGBLOX", "v0.5.0 loaded - press RightCtrl to toggle UI", 4)
 pcall(Config.Load)
+-- Honor autoload profile if the user set one.
+task.defer(function()
+    pcall(SaveManager.AutoLoad)
+end)

@@ -13,6 +13,7 @@ local StarterGui       = game:GetService("StarterGui")
 local M = {}
 
 local conns = {}
+local alive = false
 
 local function getHum()
     local lp = Players.LocalPlayer
@@ -41,6 +42,7 @@ local function sendChat(message)
 end
 
 function M.Build(tab, ctx)
+    alive = true
     local Notify = ctx.Notify
 
     -- ---------- Anti-AFK ----------
@@ -104,7 +106,8 @@ function M.Build(tab, ctx)
         if chatMsg ~= "" then sendChat(chatMsg) end
     end)
     task.spawn(function()
-        while task.wait(0.1) do
+        while alive do
+            task.wait(0.1)
             if chatEnabled and chatMsg ~= "" then
                 sendChat(chatMsg)
                 task.wait(chatDelay)
@@ -117,28 +120,33 @@ function M.Build(tab, ctx)
     local freecamOn = false
     local origSubject
     local freecamPart
-    freeSec:AddToggle("Enabled (RightShift)", false, function(v)
+
+    local function setFreecam(v)
         freecamOn = v
         local cam = Workspace.CurrentCamera
+        if not cam then return end
         if v then
             origSubject = cam.CameraSubject
-            freecamPart = Instance.new("Part")
-            freecamPart.Anchored = true
-            freecamPart.CanCollide = false
-            freecamPart.Transparency = 1
-            freecamPart.Size = Vector3.new(1,1,1)
-            freecamPart.CFrame = cam.CFrame
-            freecamPart.Parent = Workspace
+            if not freecamPart then
+                freecamPart = Instance.new("Part")
+                freecamPart.Anchored = true
+                freecamPart.CanCollide = false
+                freecamPart.Transparency = 1
+                freecamPart.Size = Vector3.new(1, 1, 1)
+                freecamPart.CFrame = cam.CFrame
+                freecamPart.Parent = Workspace
+            end
             cam.CameraType = Enum.CameraType.Custom
             cam.CameraSubject = freecamPart
         else
             cam.CameraSubject = origSubject or getHum()
             if freecamPart then freecamPart:Destroy(); freecamPart = nil end
         end
-    end)
+    end
+
+    freeSec:AddToggle("Enabled (RightShift)", false, setFreecam)
     freeSec:AddKeybind("Toggle key", Enum.KeyCode.RightShift, function()
-        -- placeholder; UI keybind already wires the hotkey, but we re-toggle the underlying state
-        freecamOn = not freecamOn
+        setFreecam(not freecamOn)
     end)
     conns.freecam = RunService.RenderStepped:Connect(function()
         if not freecamOn or not freecamPart then return end
@@ -165,6 +173,7 @@ function M.Build(tab, ctx)
 end
 
 function M.Unload()
+    alive = false
     for _, c in pairs(conns) do
         if c.Disconnect then pcall(function() c:Disconnect() end) end
     end

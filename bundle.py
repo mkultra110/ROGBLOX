@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent
 MODULES = [
     "src/library/ui.lua",
     "src/library/notify.lua",
+    "src/library/savemanager.lua",
     "src/config.lua",
     "src/utils/players.lua",
     "src/utils/drawing.lua",

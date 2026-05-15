@@ -146,7 +146,8 @@ end
 
 -- ---------- Chat logger ----------
 
-local chatHookSetup
+local chatHookSetup = false
+local chatHookSaved = {}    -- snapshot for restoration on Unload
 local function setupChatLog()
     if chatHookSetup then return end
     chatHookSetup = true
@@ -155,18 +156,22 @@ local function setupChatLog()
             print(("[ROGBLOX chat] %s: %s"):format(speaker, msg))
         end
     end
-    -- Legacy
+    -- Legacy: connection-based, auto-cleans with our conns table
     pcall(function()
         local re = game:GetService("ReplicatedStorage"):WaitForChild("DefaultChatSystemChatEvents", 3)
         if re then
-            re.OnMessageDoneFiltering.OnClientEvent:Connect(function(data)
+            conns.legacyChat = re.OnMessageDoneFiltering.OnClientEvent:Connect(function(data)
                 log(data.FromSpeaker or "?", data.Message or "")
             end)
         end
     end)
-    -- New TextChatService
+    -- New TextChatService: we replace OnIncomingMessage; save the old
+    -- handler so Unload can restore it (a chained game-side handler
+    -- would otherwise stay clobbered).
     pcall(function()
         local tcs = game:GetService("TextChatService")
+        chatHookSaved.prevOnIncoming = tcs.OnIncomingMessage
+        chatHookSaved.tcs = tcs
         tcs.OnIncomingMessage = function(message)
             local props = Instance.new("TextChatMessageProperties")
             log(message.TextSource and message.TextSource.Name or "?", message.Text)
@@ -208,8 +213,16 @@ end
 
 function M.Unload()
     for _, c in pairs(conns) do if c.Disconnect then pcall(function() c:Disconnect() end) end end
+    conns = {}
     clearItemTags()
     restore()
+    if chatHookSetup and chatHookSaved.tcs then
+        pcall(function()
+            chatHookSaved.tcs.OnIncomingMessage = chatHookSaved.prevOnIncoming
+        end)
+        chatHookSetup = false
+        chatHookSaved = {}
+    end
 end
 
 M.State = state

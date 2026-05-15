@@ -11,6 +11,8 @@ local Workspace        = game:GetService("Workspace")
 
 local M = {}
 local conns = {}
+local alive = false   -- gate for background loops
+local hookState = {}  -- snapshot of metatable handlers we replaced
 
 local state = {
     SilentAim        = false,
@@ -81,6 +83,13 @@ local function hookSilentAim()
     local oldNamecall = mt.__namecall
     if setreadonly then setreadonly(mt, false) end
 
+    -- Save originals so Unload can restore. The metatable can't truly be
+    -- "unhooked" via hookmetamethod, but we can restore the slots we
+    -- replaced so subsequent reloads don't chain hooks.
+    hookState.mt          = mt
+    hookState.oldIndex    = oldIndex
+    hookState.oldNamecall = oldNamecall
+
     local function redirectHead()
         if not state.SilentAim then return nil end
         local target = closestToCenter()
@@ -146,6 +155,7 @@ local function startHitbox()
             end
         end
     end)
+    conns.hitbox = hitboxConn
 end
 
 -- ---------- Kill Aura ----------
@@ -200,6 +210,7 @@ local function startGodMode()
             hum.Health = hum.MaxHealth
         end
     end)
+    conns.god = godConn
 end
 
 -- ---------- Anti-Aim ----------
@@ -216,9 +227,11 @@ local function startAntiAim()
             root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, math.random() * math.pi * 2, 0)
         end
     end)
+    conns.antiAim = antiAimConn
 end
 
 function M.Build(tab, ctx)
+    alive = true
     hookSilentAim()
     startHitbox()
     startGodMode()
@@ -240,7 +253,8 @@ function M.Build(tab, ctx)
     ka:AddSlider("Range", 4, 40, 12, function(v) state.KillAuraRange = v end)
     ka:AddSlider("Tick rate (ms)", 50, 1000, 100, function(v) state.KillAuraRate = v / 1000 end)
     task.spawn(function()
-        while task.wait(state.KillAuraRate) do
+        while alive do
+            task.wait(state.KillAuraRate)
             if state.KillAura then pcall(killAuraStep) end
         end
     end)
@@ -251,14 +265,29 @@ function M.Build(tab, ctx)
 end
 
 function M.Unload()
-    if hitboxConn then hitboxConn:Disconnect() end
-    if godConn then godConn:Disconnect() end
-    if antiAimConn then antiAimConn:Disconnect() end
-    state.SilentAim = false
+    alive = false
+    state.SilentAim   = false
     state.HitboxExpand = false
-    state.KillAura = false
-    state.GodMode = false
-    state.AntiAim = false
+    state.KillAura    = false
+    state.GodMode     = false
+    state.AntiAim     = false
+    -- Restore the metatable slots we hijacked so subsequent reloads
+    -- don't chain on top of our handlers.
+    if hookedSilent and hookState.mt then
+        pcall(function()
+            if setreadonly then setreadonly(hookState.mt, false) end
+            hookState.mt.__index    = hookState.oldIndex
+            hookState.mt.__namecall = hookState.oldNamecall
+            if setreadonly then setreadonly(hookState.mt, true) end
+        end)
+        hookedSilent = false
+        hookState = {}
+    end
+    for _, c in pairs(conns) do
+        if c and c.Disconnect then pcall(function() c:Disconnect() end) end
+    end
+    conns = {}
+    hitboxConn, godConn, antiAimConn = nil, nil, nil
 end
 
 M.State = state

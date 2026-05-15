@@ -1125,6 +1125,209 @@ return Notify
 
 end
 
+_modules['src/library/savemanager.lua'] = function()
+--[[
+    SaveManager addon (Linoria pattern).
+
+    Per-PlaceId named profiles, persisted as JSON on disk via the
+    executor's filesystem API.
+
+    Storage layout:
+        ROGBLOX/
+          settings/
+            <placeId>/
+              <profileName>.json
+              autoload.txt        -- name of profile to load on startup
+
+    Each registered "flag" is a {Get, Set} pair backed by a UI component.
+    Save() serializes every flag's current value, Load() restores them.
+]]
+
+local HttpService = game:GetService("HttpService")
+
+local M = {}
+
+M.Folder       = "ROGBLOX/settings"
+M.PlaceFolder  = nil
+M.AutoloadPath = nil
+M.Flags        = {}     -- [name] = {Get = fn, Set = fn(value), Default = ?}
+M.Listeners    = {}
+M.Ignore       = {}     -- [name] = true skips on save/load (e.g. theme keys)
+
+-- ---------- Filesystem helpers ----------
+
+local hasFS = type(writefile) == "function"
+             and type(readfile)  == "function"
+             and type(isfile)    == "function"
+             and type(makefolder) == "function"
+
+local function ensureFolders()
+    if not hasFS then return false end
+    for _, path in ipairs({"ROGBLOX", M.Folder, M.PlaceFolder}) do
+        if isfolder and not isfolder(path) then
+            pcall(makefolder, path)
+        end
+    end
+    return true
+end
+
+local function init()
+    M.PlaceFolder = M.Folder .. "/" .. tostring(game.PlaceId)
+    M.AutoloadPath = M.PlaceFolder .. "/autoload.txt"
+    ensureFolders()
+end
+init()
+
+-- ---------- Flag registration ----------
+
+function M.Register(name, accessors)
+    -- accessors = {Get = function() return v end, Set = function(v) ... end, Default = v}
+    M.Flags[name] = accessors
+end
+
+function M.Unregister(name)
+    M.Flags[name] = nil
+end
+
+function M.SetIgnore(name, on)
+    M.Ignore[name] = on and true or nil
+end
+
+-- ---------- Save / load ----------
+
+function M.Snapshot()
+    local out = {}
+    for name, accessors in pairs(M.Flags) do
+        if not M.Ignore[name] and accessors.Get then
+            local ok, value = pcall(accessors.Get)
+            if ok then
+                -- Color3 -> {hex} for JSON round-trip
+                if typeof(value) == "Color3" then
+                    out[name] = {kind = "Color3", hex = string.format("#%02x%02x%02x",
+                        math.floor(value.R * 255 + 0.5),
+                        math.floor(value.G * 255 + 0.5),
+                        math.floor(value.B * 255 + 0.5))}
+                elseif typeof(value) == "EnumItem" then
+                    out[name] = {kind = "Enum", value = tostring(value)}
+                elseif type(value) == "table" then
+                    out[name] = {kind = "table", value = value}
+                else
+                    out[name] = value
+                end
+            end
+        end
+    end
+    return out
+end
+
+function M.Apply(data)
+    if type(data) ~= "table" then return end
+    for name, value in pairs(data) do
+        local accessors = M.Flags[name]
+        if accessors and accessors.Set then
+            local v = value
+            if type(value) == "table" and value.kind == "Color3" and value.hex then
+                local r = tonumber(value.hex:sub(2, 3), 16) or 0
+                local g = tonumber(value.hex:sub(4, 5), 16) or 0
+                local b = tonumber(value.hex:sub(6, 7), 16) or 0
+                v = Color3.fromRGB(r, g, b)
+            elseif type(value) == "table" and value.kind == "table" then
+                v = value.value
+            end
+            pcall(accessors.Set, v)
+        end
+    end
+end
+
+function M.Save(profileName)
+    if not hasFS then return false, "no filesystem" end
+    profileName = profileName or "default"
+    ensureFolders()
+    local path = M.PlaceFolder .. "/" .. profileName .. ".json"
+    local ok, encoded = pcall(HttpService.JSONEncode, HttpService, M.Snapshot())
+    if not ok then return false, encoded end
+    local ok2, err = pcall(writefile, path, encoded)
+    return ok2, err or path
+end
+
+function M.Load(profileName)
+    if not hasFS then return false, "no filesystem" end
+    profileName = profileName or "default"
+    local path = M.PlaceFolder .. "/" .. profileName .. ".json"
+    if not (isfile and isfile(path)) then return false, "no such profile" end
+    local ok, raw = pcall(readfile, path)
+    if not ok then return false, raw end
+    local ok2, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
+    if not ok2 then return false, decoded end
+    M.Apply(decoded)
+    return true
+end
+
+function M.Delete(profileName)
+    if not hasFS then return false end
+    local path = M.PlaceFolder .. "/" .. profileName .. ".json"
+    if isfile and isfile(path) and delfile then
+        pcall(delfile, path)
+        return true
+    end
+    return false
+end
+
+function M.List()
+    local out = {}
+    if not (hasFS and listfiles) then return out end
+    local ok, files = pcall(listfiles, M.PlaceFolder)
+    if not ok then return out end
+    for _, file in ipairs(files) do
+        local name = file:match("([^/\\]+)%.json$")
+        if name then table.insert(out, name) end
+    end
+    table.sort(out)
+    return out
+end
+
+-- ---------- Autoload ----------
+
+function M.SetAutoload(profileName)
+    if not hasFS then return end
+    if profileName == nil or profileName == "" then
+        if isfile and isfile(M.AutoloadPath) and delfile then pcall(delfile, M.AutoloadPath) end
+        return
+    end
+    pcall(writefile, M.AutoloadPath, tostring(profileName))
+end
+
+function M.GetAutoload()
+    if not hasFS then return nil end
+    if isfile and isfile(M.AutoloadPath) then
+        local ok, name = pcall(readfile, M.AutoloadPath)
+        if ok then return name end
+    end
+    return nil
+end
+
+function M.AutoLoad()
+    local name = M.GetAutoload()
+    if name and name ~= "" then
+        return M.Load(name)
+    end
+    return false
+end
+
+-- ---------- UI binding helpers ----------
+
+-- Helper to wrap a UI component (with :Get / :Set) into a flag.
+function M.BindComponent(name, component)
+    M.Register(name, {
+        Get = function() return component.Get and component:Get() or component:Get() end,
+        Set = function(v) if component.Set then component:Set(v) end end,
+    })
+end
+
+return M
+
+end
+
 _modules['src/config.lua'] = function()
 --[[
     Config persistence
@@ -2486,6 +2689,8 @@ local Workspace        = game:GetService("Workspace")
 
 local M = {}
 local conns = {}
+local alive = false   -- gate for background loops
+local hookState = {}  -- snapshot of metatable handlers we replaced
 
 local state = {
     SilentAim        = false,
@@ -2556,6 +2761,13 @@ local function hookSilentAim()
     local oldNamecall = mt.__namecall
     if setreadonly then setreadonly(mt, false) end
 
+    -- Save originals so Unload can restore. The metatable can't truly be
+    -- "unhooked" via hookmetamethod, but we can restore the slots we
+    -- replaced so subsequent reloads don't chain hooks.
+    hookState.mt          = mt
+    hookState.oldIndex    = oldIndex
+    hookState.oldNamecall = oldNamecall
+
     local function redirectHead()
         if not state.SilentAim then return nil end
         local target = closestToCenter()
@@ -2621,6 +2833,7 @@ local function startHitbox()
             end
         end
     end)
+    conns.hitbox = hitboxConn
 end
 
 -- ---------- Kill Aura ----------
@@ -2675,6 +2888,7 @@ local function startGodMode()
             hum.Health = hum.MaxHealth
         end
     end)
+    conns.god = godConn
 end
 
 -- ---------- Anti-Aim ----------
@@ -2691,9 +2905,11 @@ local function startAntiAim()
             root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, math.random() * math.pi * 2, 0)
         end
     end)
+    conns.antiAim = antiAimConn
 end
 
 function M.Build(tab, ctx)
+    alive = true
     hookSilentAim()
     startHitbox()
     startGodMode()
@@ -2715,7 +2931,8 @@ function M.Build(tab, ctx)
     ka:AddSlider("Range", 4, 40, 12, function(v) state.KillAuraRange = v end)
     ka:AddSlider("Tick rate (ms)", 50, 1000, 100, function(v) state.KillAuraRate = v / 1000 end)
     task.spawn(function()
-        while task.wait(state.KillAuraRate) do
+        while alive do
+            task.wait(state.KillAuraRate)
             if state.KillAura then pcall(killAuraStep) end
         end
     end)
@@ -2726,14 +2943,29 @@ function M.Build(tab, ctx)
 end
 
 function M.Unload()
-    if hitboxConn then hitboxConn:Disconnect() end
-    if godConn then godConn:Disconnect() end
-    if antiAimConn then antiAimConn:Disconnect() end
-    state.SilentAim = false
+    alive = false
+    state.SilentAim   = false
     state.HitboxExpand = false
-    state.KillAura = false
-    state.GodMode = false
-    state.AntiAim = false
+    state.KillAura    = false
+    state.GodMode     = false
+    state.AntiAim     = false
+    -- Restore the metatable slots we hijacked so subsequent reloads
+    -- don't chain on top of our handlers.
+    if hookedSilent and hookState.mt then
+        pcall(function()
+            if setreadonly then setreadonly(hookState.mt, false) end
+            hookState.mt.__index    = hookState.oldIndex
+            hookState.mt.__namecall = hookState.oldNamecall
+            if setreadonly then setreadonly(hookState.mt, true) end
+        end)
+        hookedSilent = false
+        hookState = {}
+    end
+    for _, c in pairs(conns) do
+        if c and c.Disconnect then pcall(function() c:Disconnect() end) end
+    end
+    conns = {}
+    hitboxConn, godConn, antiAimConn = nil, nil, nil
 end
 
 M.State = state
@@ -3799,7 +4031,8 @@ end
 
 -- ---------- Chat logger ----------
 
-local chatHookSetup
+local chatHookSetup = false
+local chatHookSaved = {}    -- snapshot for restoration on Unload
 local function setupChatLog()
     if chatHookSetup then return end
     chatHookSetup = true
@@ -3808,18 +4041,22 @@ local function setupChatLog()
             print(("[ROGBLOX chat] %s: %s"):format(speaker, msg))
         end
     end
-    -- Legacy
+    -- Legacy: connection-based, auto-cleans with our conns table
     pcall(function()
         local re = game:GetService("ReplicatedStorage"):WaitForChild("DefaultChatSystemChatEvents", 3)
         if re then
-            re.OnMessageDoneFiltering.OnClientEvent:Connect(function(data)
+            conns.legacyChat = re.OnMessageDoneFiltering.OnClientEvent:Connect(function(data)
                 log(data.FromSpeaker or "?", data.Message or "")
             end)
         end
     end)
-    -- New TextChatService
+    -- New TextChatService: we replace OnIncomingMessage; save the old
+    -- handler so Unload can restore it (a chained game-side handler
+    -- would otherwise stay clobbered).
     pcall(function()
         local tcs = game:GetService("TextChatService")
+        chatHookSaved.prevOnIncoming = tcs.OnIncomingMessage
+        chatHookSaved.tcs = tcs
         tcs.OnIncomingMessage = function(message)
             local props = Instance.new("TextChatMessageProperties")
             log(message.TextSource and message.TextSource.Name or "?", message.Text)
@@ -3861,8 +4098,16 @@ end
 
 function M.Unload()
     for _, c in pairs(conns) do if c.Disconnect then pcall(function() c:Disconnect() end) end end
+    conns = {}
     clearItemTags()
     restore()
+    if chatHookSetup and chatHookSaved.tcs then
+        pcall(function()
+            chatHookSaved.tcs.OnIncomingMessage = chatHookSaved.prevOnIncoming
+        end)
+        chatHookSetup = false
+        chatHookSaved = {}
+    end
 end
 
 M.State = state
@@ -5380,6 +5625,7 @@ local StarterGui       = game:GetService("StarterGui")
 local M = {}
 
 local conns = {}
+local alive = false
 
 local function getHum()
     local lp = Players.LocalPlayer
@@ -5408,6 +5654,7 @@ local function sendChat(message)
 end
 
 function M.Build(tab, ctx)
+    alive = true
     local Notify = ctx.Notify
 
     -- ---------- Anti-AFK ----------
@@ -5471,7 +5718,8 @@ function M.Build(tab, ctx)
         if chatMsg ~= "" then sendChat(chatMsg) end
     end)
     task.spawn(function()
-        while task.wait(0.1) do
+        while alive do
+            task.wait(0.1)
             if chatEnabled and chatMsg ~= "" then
                 sendChat(chatMsg)
                 task.wait(chatDelay)
@@ -5484,28 +5732,33 @@ function M.Build(tab, ctx)
     local freecamOn = false
     local origSubject
     local freecamPart
-    freeSec:AddToggle("Enabled (RightShift)", false, function(v)
+
+    local function setFreecam(v)
         freecamOn = v
         local cam = Workspace.CurrentCamera
+        if not cam then return end
         if v then
             origSubject = cam.CameraSubject
-            freecamPart = Instance.new("Part")
-            freecamPart.Anchored = true
-            freecamPart.CanCollide = false
-            freecamPart.Transparency = 1
-            freecamPart.Size = Vector3.new(1,1,1)
-            freecamPart.CFrame = cam.CFrame
-            freecamPart.Parent = Workspace
+            if not freecamPart then
+                freecamPart = Instance.new("Part")
+                freecamPart.Anchored = true
+                freecamPart.CanCollide = false
+                freecamPart.Transparency = 1
+                freecamPart.Size = Vector3.new(1, 1, 1)
+                freecamPart.CFrame = cam.CFrame
+                freecamPart.Parent = Workspace
+            end
             cam.CameraType = Enum.CameraType.Custom
             cam.CameraSubject = freecamPart
         else
             cam.CameraSubject = origSubject or getHum()
             if freecamPart then freecamPart:Destroy(); freecamPart = nil end
         end
-    end)
+    end
+
+    freeSec:AddToggle("Enabled (RightShift)", false, setFreecam)
     freeSec:AddKeybind("Toggle key", Enum.KeyCode.RightShift, function()
-        -- placeholder; UI keybind already wires the hotkey, but we re-toggle the underlying state
-        freecamOn = not freecamOn
+        setFreecam(not freecamOn)
     end)
     conns.freecam = RunService.RenderStepped:Connect(function()
         if not freecamOn or not freecamPart then return end
@@ -5532,6 +5785,7 @@ function M.Build(tab, ctx)
 end
 
 function M.Unload()
+    alive = false
     for _, c in pairs(conns) do
         if c.Disconnect then pcall(function() c:Disconnect() end) end
     end
@@ -5553,9 +5807,10 @@ local BASE = "https://raw.githubusercontent.com/mkultra110/rogblox/" .. BRANCH .
 
 -- fetch provided by bundler
 -- libraries first
-local UI       = fetch("src/library/ui.lua")
-local Notify   = fetch("src/library/notify.lua")
-local Config   = fetch("src/config.lua")
+local UI          = fetch("src/library/ui.lua")
+local Notify      = fetch("src/library/notify.lua")
+local SaveManager = fetch("src/library/savemanager.lua")
+local Config      = fetch("src/config.lua")
 
 -- shared utilities
 local PlayersUtil = fetch("src/utils/players.lua")
@@ -5584,14 +5839,15 @@ local Window = UI:CreateWindow({
 })
 
 local ctx = {
-    UI       = UI,
-    Window   = Window,
-    Notify   = Notify,
-    Config   = Config,
-    Players  = PlayersUtil,
-    Drawing  = Drawing,
-    Env      = Env,
-    Aimbot   = Aimbot,
+    UI          = UI,
+    Window      = Window,
+    Notify      = Notify,
+    Config      = Config,
+    SaveManager = SaveManager,
+    Players     = PlayersUtil,
+    Drawing     = Drawing,
+    Env         = Env,
+    Aimbot      = Aimbot,
 }
 
 -- Aimbot first so HUD can read its LockedTarget through ctx.
@@ -5625,6 +5881,31 @@ end)
 
 local themeSection = SettingsTab:AddSection("Theme")
 themeSection:AddColorPicker("Accent color", UI.Theme.Accent, function(c) Window:SetAccent(c) end)
+
+local profilesSection = SettingsTab:AddSection("Profiles (named configs)")
+local profileName = "default"
+profilesSection:AddTextBox("Profile name", "default", function(v) profileName = v ~= "" and v or "default" end)
+profilesSection:AddButton("Save profile", function()
+    local ok, info = SaveManager.Save(profileName)
+    Notify:Send("Profile", ok and ("Saved " .. profileName) or ("Save failed: " .. tostring(info)), 3)
+end)
+profilesSection:AddButton("Load profile", function()
+    local ok, info = SaveManager.Load(profileName)
+    Notify:Send("Profile", ok and ("Loaded " .. profileName) or ("Load failed: " .. tostring(info)), 3)
+end)
+profilesSection:AddButton("Delete profile", function()
+    if SaveManager.Delete(profileName) then
+        Notify:Send("Profile", "Deleted " .. profileName, 3)
+    end
+end)
+profilesSection:AddButton("Set as autoload", function()
+    SaveManager.SetAutoload(profileName)
+    Notify:Send("Profile", "Will autoload " .. profileName, 3)
+end)
+profilesSection:AddButton("Clear autoload", function()
+    SaveManager.SetAutoload(nil)
+    Notify:Send("Profile", "Autoload cleared", 3)
+end)
 
 local infoSection = SettingsTab:AddSection("About")
 infoSection:AddLabel("ROGBLOX — pro Roblox cheat hub")
@@ -5662,5 +5943,9 @@ _G.ROGBLOX = {
     end,
 }
 
-Notify:Send("ROGBLOX", "v0.3.0 loaded — press RightCtrl to toggle UI", 4)
+Notify:Send("ROGBLOX", "v0.5.0 loaded - press RightCtrl to toggle UI", 4)
 pcall(Config.Load)
+-- Honor autoload profile if the user set one.
+task.defer(function()
+    pcall(SaveManager.AutoLoad)
+end)
