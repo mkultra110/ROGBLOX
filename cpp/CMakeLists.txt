@@ -24,5 +24,6 @@ add_compile_definitions(
 
 add_subdirectory(injector)
 add_subdirectory(payload)
+add_subdirectory(loader)
 
 message(STATUS "ROGBLOX C++ configured. Build: cmake --build build --config Release")
