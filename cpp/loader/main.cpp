@@ -363,11 +363,23 @@ static bool wait_for_folder(const fs::path& p, int seconds) {
     return false;
 }
 
+struct InstallResult {
+    std::wstring name;       // executor name if it installed, else empty
+    std::wstring last_diag;  // last diagnostic line - surfaced in final
+                             // status when install fails so the user sees
+                             // which step actually broke
+};
+
 // Multi-source auto-installer. Walks a list of executor landing pages,
 // scrapes every .exe candidate, and tries each until one downloads as a
 // valid PE and the installer creates its autoexec folder. Pushes status
 // updates to the UI at every step so the user sees what's happening.
-static std::wstring auto_install_executor() {
+static InstallResult auto_install_executor() {
+    InstallResult result;
+    auto step = [&](const std::wstring& s, COLORREF c) {
+        result.last_diag = s;
+        post_status(s, c);
+    };
     struct Source {
         const wchar_t* name;
         const wchar_t* page;
@@ -396,50 +408,50 @@ static std::wstring auto_install_executor() {
     for (auto& src : sources) {
         add_defender_exclusion(src.folder.wstring());
 
-        post_status(L"Fetching " + std::wstring(src.page) + L" ...", ui::WARN);
+        step(L"Fetching " + std::wstring(src.page) + L" ...", ui::WARN);
         auto sr = scrape_exe_candidates(src.page);
 
         if (sr.cf_blocked) {
-            post_status(std::wstring(src.page) +
-                        L"\nblocked by Cloudflare challenge - skipping",
-                        ui::WARN);
+            step(std::wstring(src.page) +
+                 L"\nblocked by Cloudflare challenge - skipping",
+                 ui::WARN);
             continue;
         }
         if (sr.status >= 400) {
             wchar_t buf[64];
             wsprintfW(buf, L"HTTP %u", sr.status);
-            post_status(std::wstring(src.page) + L"\nreturned " + buf +
-                        L" - skipping", ui::WARN);
+            step(std::wstring(src.page) + L"\nreturned " + buf +
+                 L" - skipping", ui::WARN);
             continue;
         }
         if (sr.candidates.empty()) {
             wchar_t buf[96];
             wsprintfW(buf, L"%u bytes, no .exe links found", (unsigned)sr.bytes);
-            post_status(std::wstring(src.page) + L"\n" + buf + L" - skipping",
-                        ui::WARN);
+            step(std::wstring(src.page) + L"\n" + buf + L" - skipping",
+                 ui::WARN);
             continue;
         }
 
         wchar_t banner[80];
         wsprintfW(banner, L"Found %u download candidate(s) on %ls",
                   (unsigned)sr.candidates.size(), src.page);
-        post_status(banner, ui::WARN);
+        step(banner, ui::WARN);
 
         bool success = false;
         for (size_t i = 0; i < sr.candidates.size() && !success; ++i) {
             const std::wstring& url = sr.candidates[i];
-            post_status(L"Downloading\n" + url, ui::WARN);
+            step(L"Downloading\n" + url, ui::WARN);
 
             fs::path installer = temp_dir /
                 (std::wstring(src.name) + L"-installer.exe");
             if (!download_and_validate(url, installer)) {
-                post_status(L"Download failed or not a valid .exe\nTrying next candidate...",
-                            ui::WARN);
+                step(L"Download failed or not a valid .exe\nTrying next candidate...",
+                     ui::WARN);
                 continue;
             }
 
-            post_status(L"Installer downloaded.\nLaunching - accept the UAC prompt if it appears.",
-                        ui::WARN);
+            step(L"Installer downloaded.\nLaunching - accept the UAC prompt if it appears.",
+                 ui::WARN);
             SHELLEXECUTEINFOW sei{};
             sei.cbSize = sizeof(sei);
             sei.fMask  = SEE_MASK_NOCLOSEPROCESS;
@@ -448,25 +460,28 @@ static std::wstring auto_install_executor() {
             sei.lpParameters = L"/SILENT";
             sei.nShow = SW_SHOW;
             if (!ShellExecuteExW(&sei)) {
-                post_status(L"Could not start the installer\n(possibly blocked by Defender / SmartScreen)",
-                            ui::BAD);
+                step(L"Could not start the installer\n(possibly blocked by Defender / SmartScreen)",
+                     ui::BAD);
                 continue;
             }
             if (sei.hProcess) CloseHandle(sei.hProcess);
 
-            post_status(L"Installer running. Waiting up to 3 minutes\nfor the autoexec folder to appear...",
-                        ui::WARN);
+            step(L"Installer running. Waiting up to 3 minutes\nfor the autoexec folder to appear...",
+                 ui::WARN);
             if (wait_for_folder(src.folder / L"autoexec", 180)) {
                 Sleep(2500);
                 success = true;
             } else {
-                post_status(L"Installer never created the autoexec folder.\nTrying next candidate...",
-                            ui::WARN);
+                step(L"Installer never created the autoexec folder.\nTrying next candidate...",
+                     ui::WARN);
             }
         }
-        if (success) return src.name;
+        if (success) {
+            result.name = src.name;
+            return result;
+        }
     }
-    return L"";
+    return result;
 }
 
 static std::vector<std::wstring> install_bundle() {
@@ -699,14 +714,14 @@ static void run_load_action() {
     std::thread([]() {
         // 1. If no executor is present, try to auto-install Solara.
         auto folders = detect_installed_executors();
-        std::wstring auto_installed;
+        InstallResult installer;
         if (folders.empty()) {
             post_status(
                 L"No executor detected. Downloading Solara now...\n"
                 L"This may take a couple minutes - watch for UAC + the\n"
                 L"installer window. Don't close this loader.",
                 ui::WARN);
-            auto_installed = auto_install_executor();
+            installer = auto_install_executor();
             folders = detect_installed_executors();
         }
 
@@ -725,17 +740,21 @@ static void run_load_action() {
                 if (i > 0) msg += L", ";
                 msg += installed[i];
             }
-            if (!auto_installed.empty()) {
-                msg += L".\nAuto-installed " + auto_installed + L". ";
+            if (!installer.name.empty()) {
+                msg += L".\nAuto-installed " + installer.name + L". ";
             } else {
                 msg += L". ";
             }
             msg += L"Roblox is launching - press RightCtrl in-game.";
             col = ui::GOOD;
         } else if (installed.empty() && launched) {
-            msg = L"Roblox is launching, but no executor could be installed\n"
-                  L"automatically. Install Solara / Wave / Xeno manually,\n"
-                  L"then click Load again.";
+            msg = L"Auto-install failed. Roblox is launching anyway.\n\n";
+            if (!installer.last_diag.empty()) {
+                msg += L"Last step: " + installer.last_diag;
+            } else {
+                msg += L"Install Solara / Wave / Xeno manually,\n"
+                       L"then click Load again.";
+            }
             col = ui::WARN;
         } else if (!installed.empty()) {
             msg = L"Cheat installed but couldn't auto-launch Roblox.\n"
