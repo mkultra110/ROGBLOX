@@ -30,6 +30,8 @@
 // WIN32_LEAN_AND_MEAN strips <ole2.h> from Windows.h so we need this
 // explicit include or every Gdiplus header errors out.
 #include <objbase.h>
+// shellapi.h provides ShellExecuteW. Also stripped by WIN32_LEAN_AND_MEAN.
+#include <shellapi.h>
 #include <gdiplus.h>
 #include <dwmapi.h>
 #include <shlwapi.h>
@@ -173,24 +175,24 @@ static bool launch_roblox() {
 
 // ---------- Painting ----------
 
-static void draw_rounded_filled(Graphics& g, const RectF& r, REAL radius, Brush& brush) {
+static void draw_rounded_filled(Graphics& gx, const RectF& r, REAL radius, Brush& brush) {
     GraphicsPath path;
     path.AddArc(r.X,                    r.Y,                    radius * 2, radius * 2, 180, 90);
     path.AddArc(r.X + r.Width - radius*2, r.Y,                  radius * 2, radius * 2, 270, 90);
     path.AddArc(r.X + r.Width - radius*2, r.Y + r.Height - radius*2, radius*2, radius*2, 0, 90);
     path.AddArc(r.X,                    r.Y + r.Height - radius*2, radius*2, radius*2, 90, 90);
     path.CloseFigure();
-    g.FillPath(&brush, &path);
+    gx.FillPath(&brush, &path);
 }
 
-static void draw_rounded_stroke(Graphics& g, const RectF& r, REAL radius, Pen& pen) {
+static void draw_rounded_stroke(Graphics& gx, const RectF& r, REAL radius, Pen& pen) {
     GraphicsPath path;
     path.AddArc(r.X,                    r.Y,                    radius * 2, radius * 2, 180, 90);
     path.AddArc(r.X + r.Width - radius*2, r.Y,                  radius * 2, radius * 2, 270, 90);
     path.AddArc(r.X + r.Width - radius*2, r.Y + r.Height - radius*2, radius*2, radius*2, 0, 90);
     path.AddArc(r.X,                    r.Y + r.Height - radius*2, radius*2, radius*2, 90, 90);
     path.CloseFigure();
-    g.DrawPath(&pen, &path);
+    gx.DrawPath(&pen, &path);
 }
 
 static Color from_colorref(COLORREF c, BYTE a = 255) {
@@ -198,7 +200,7 @@ static Color from_colorref(COLORREF c, BYTE a = 255) {
 }
 
 // Draws an ambient gradient orb (soft radial glow).
-static void draw_orb(Graphics& g, REAL cx, REAL cy, REAL radius,
+static void draw_orb(Graphics& gx, REAL cx, REAL cy, REAL radius,
                      COLORREF color, BYTE peak_alpha) {
     GraphicsPath p;
     p.AddEllipse(cx - radius, cy - radius, radius * 2, radius * 2);
@@ -208,7 +210,7 @@ static void draw_orb(Graphics& g, REAL cx, REAL cy, REAL radius,
     Color surround[1] = { Color(0, 0, 0, 0) };
     int count = 1;
     brush.SetSurroundColors(surround, &count);
-    g.FillPath(&brush, &p);
+    gx.FillPath(&brush, &p);
 }
 
 static void paint_window(HWND hwnd) {
@@ -225,32 +227,32 @@ static void paint_window(HWND hwnd) {
     HBITMAP old = (HBITMAP)SelectObject(mem, bmp);
 
     {
-        Graphics g(mem);
-        g.SetSmoothingMode(SmoothingModeAntiAlias);
-        g.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
+        Graphics gx(mem);
+        gx.SetSmoothingMode(SmoothingModeAntiAlias);
+        gx.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
 
         // Background gradient
         LinearGradientBrush bg(
             PointF(0, 0), PointF((REAL)W, (REAL)H),
             from_colorref(ui::BG_TOP), from_colorref(ui::BG_BOTTOM));
         RectF full(0, 0, (REAL)W, (REAL)H);
-        draw_rounded_filled(g, full, (REAL)ui::CORNER, bg);
+        draw_rounded_filled(gx, full, (REAL)ui::CORNER, bg);
 
         // Ambient orbs
-        draw_orb(g, -40,  -40,  220, RGB(0x7C, 0x3A, 0xED), 140);
-        draw_orb(g, (REAL)W + 40, (REAL)H + 40, 200, RGB(0x22, 0xD3, 0xEE), 90);
-        draw_orb(g, (REAL)W,  -20,  140, RGB(0xFF, 0x4F, 0xB8), 60);
+        draw_orb(gx, -40,  -40,  220, RGB(0x7C, 0x3A, 0xED), 140);
+        draw_orb(gx, (REAL)W + 40, (REAL)H + 40, 200, RGB(0x22, 0xD3, 0xEE), 90);
+        draw_orb(gx, (REAL)W,  -20,  140, RGB(0xFF, 0x4F, 0xB8), 60);
 
         // Window stroke
         Pen stroke(from_colorref(ui::STROKE), 1.0f);
-        draw_rounded_stroke(g, RectF(0.5f, 0.5f, (REAL)W - 1, (REAL)H - 1),
+        draw_rounded_stroke(gx, RectF(0.5f, 0.5f, (REAL)W - 1, (REAL)H - 1),
                              (REAL)ui::CORNER, stroke);
 
         // Glass card centered
         RectF card(40, 60, (REAL)(W - 80), (REAL)(H - 130));
         SolidBrush cardBrush(from_colorref(ui::CARD, 235));
-        draw_rounded_filled(g, card, 12.0f, cardBrush);
-        draw_rounded_stroke(g, card, 12.0f, stroke);
+        draw_rounded_filled(gx, card, 12.0f, cardBrush);
+        draw_rounded_stroke(gx, card, 12.0f, stroke);
 
         // ROGBLOX wordmark with gradient text
         FontFamily ff(L"Segoe UI");
@@ -263,21 +265,21 @@ static void paint_window(HWND hwnd) {
             PointF(logoRect.X + logoRect.Width, logoRect.Y),
             Color(255, 0xDA, 0xB6, 0xFF),
             Color(255, 0xFF, 0x6B, 0xC8));
-        g.DrawString(L"ROGBLOX", -1, &logoFont, logoRect, &fmt, &logoBrush);
+        gx.DrawString(L"ROGBLOX", -1, &logoFont, logoRect, &fmt, &logoBrush);
 
         Font subFont(&ff, 11, FontStyleRegular, UnitPixel);
         SolidBrush subBrush(from_colorref(ui::TEXT_SUB));
         RectF subRect(card.X, card.Y + 62, card.Width, 18);
-        g.DrawString(L"Roblox cheat hub - click Load",
+        gx.DrawString(L"Roblox cheat hub - click Load",
                      -1, &subFont, subRect, &fmt, &subBrush);
 
         // Big "Load" button - hit-tested directly in WM_LBUTTONDOWN.
         RectF btnRect(card.X + 30, card.Y + 100, card.Width - 60, 50);
         Color a0, a1;
-        if (::g.btn_pressed) {
+        if (g.btn_pressed) {
             a0 = Color(255, 0x80, 0x4A, 0xDD);
             a1 = Color(255, 0x55, 0x28, 0xB0);
-        } else if (::g.btn_hover) {
+        } else if (g.btn_hover) {
             a0 = from_colorref(ui::ACCENT_HOV);
             a1 = Color(255, 0x77, 0x45, 0xFF);
         } else {
@@ -290,28 +292,28 @@ static void paint_window(HWND hwnd) {
             a0, a1);
         // Glow underlay (drop shadow approximation)
         for (int i = 6; i >= 0; --i) {
-            RectF g_r(btnRect.X - i, btnRect.Y - i,
-                      btnRect.Width + 2 * i, btnRect.Height + 2 * i);
+            RectF glow_r(btnRect.X - i, btnRect.Y - i,
+                         btnRect.Width + 2 * i, btnRect.Height + 2 * i);
             SolidBrush glow(Color((BYTE)(8 + i * 4), 0xA0, 0x6C, 0xFF));
-            draw_rounded_filled(g, g_r, 12.0f + i, glow);
+            draw_rounded_filled(gx, glow_r, 12.0f + i, glow);
         }
-        draw_rounded_filled(g, btnRect, 12.0f, btnBrush);
+        draw_rounded_filled(gx, btnRect, 12.0f, btnBrush);
 
         Font bigFont(&ff, 18, FontStyleBold, UnitPixel);
-        SolidBrush white(Color::White);
+        SolidBrush white(Color((ARGB)Color::White));
         RectF btnText = btnRect;
         // vertical center hack: shift down a couple px so caps look centered
         btnText.Y += 12;
-        g.DrawString(::g.busy.load() ? L"Working..." : L"Load",
+        gx.DrawString(g.busy.load() ? L"Working..." : L"Load",
                      -1, &bigFont, btnText, &fmt, &white);
 
         // Status text
         Font statFont(&ff, 11, FontStyleRegular, UnitPixel);
-        SolidBrush statBrush(from_colorref(::g.status_color));
+        SolidBrush statBrush(from_colorref(g.status_color));
         RectF statRect(card.X + 16, card.Y + 162,
                        card.Width - 32, card.Height - 170);
         StringFormat statFmt; statFmt.SetAlignment(StringAlignmentCenter);
-        g.DrawString(::g.status.c_str(), -1, &statFont, statRect, &statFmt, &statBrush);
+        gx.DrawString(g.status.c_str(), -1, &statFont, statRect, &statFmt, &statBrush);
 
         // Footer
         Font footFont(&ff, 10, FontStyleRegular, UnitPixel);
@@ -320,8 +322,8 @@ static void paint_window(HWND hwnd) {
         StringFormat footFmtR; footFmtR.SetAlignment(StringAlignmentFar);
         RectF footL(16, (REAL)H - 24, 200, 18);
         RectF footR((REAL)W - 280 - 16, (REAL)H - 24, 280, 18);
-        g.DrawString(L"ROGBLOX v0.5.0 (C++ loader)", -1, &footFont, footL, &footFmtL, &dimBrush);
-        g.DrawString(L"press RightCtrl in-game",       -1, &footFont, footR, &footFmtR, &dimBrush);
+        gx.DrawString(L"ROGBLOX v0.5.0 (C++ loader)", -1, &footFont, footL, &footFmtL, &dimBrush);
+        gx.DrawString(L"press RightCtrl in-game",       -1, &footFont, footR, &footFmtR, &dimBrush);
     }
 
     BitBlt(hdc, 0, 0, W, H, mem, 0, 0, SRCCOPY);
