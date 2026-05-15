@@ -5,6 +5,6 @@
 .DS_Store
 Thumbs.db
 
-# build artifacts
-launch-bundled.ps1
+# C++ build artifacts
+cpp/build/
 ROGBLOX.exe
