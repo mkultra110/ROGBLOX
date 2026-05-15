@@ -9,6 +9,7 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Modules = @(
     'src/library/ui.lua',
     'src/library/notify.lua',
+    'src/library/splash.lua',
     'src/library/savemanager.lua',
     'src/library/thememanager.lua',
     'src/config.lua',

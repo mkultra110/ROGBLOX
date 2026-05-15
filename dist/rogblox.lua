@@ -175,6 +175,30 @@ function UI:CreateWindow(opts)
     corner(10, root)
     stroke(THEME.Stroke, 1, root)
 
+    -- subtle window background gradient (panel-darker -> background)
+    new("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, THEME.Panel2),
+            ColorSequenceKeypoint.new(1, THEME.Background),
+        }),
+        Rotation = 130,
+        Parent = root,
+    })
+
+    -- soft accent halo behind the title bar (purely decorative)
+    do
+        local glow = new("Frame", {
+            Parent = root,
+            BackgroundColor3 = THEME.Accent,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 14, 0, -8),
+            Size = UDim2.new(0, 220, 0, 14),
+            BackgroundTransparency = 0.85,
+            ZIndex = 0,
+        })
+        corner(7, glow)
+    end
+
     -- Title bar
     local titleBar = new("Frame", {
         Parent = root,
@@ -1012,35 +1036,48 @@ end
 
 _modules['src/library/notify.lua'] = function()
 --[[
-    Notify — small toast notifications in the top-right.
+    Toast notifications — top-right stack with slide-in from right
+    (Back-easing overshoot) and slide-out on dismiss. Each notification
+    has an accent strip, drop shadow, and gradient background.
 ]]
 
 local TweenService = game:GetService("TweenService")
-local CoreGui = game:GetService("CoreGui")
+local CoreGui      = game:GetService("CoreGui")
 
 local Notify = {}
 
 local container
+
+local THEME = {
+    Bg     = Color3.fromRGB(20, 18, 28),
+    Bg2    = Color3.fromRGB(28, 26, 40),
+    Accent = Color3.fromRGB(140, 100, 255),
+    Text   = Color3.fromRGB(232, 232, 244),
+    Sub    = Color3.fromRGB(160, 162, 178),
+    Stroke = Color3.fromRGB(60, 56, 84),
+}
 
 local function ensureContainer()
     if container and container.Parent then return container end
     local gui = Instance.new("ScreenGui")
     gui.Name = "ROGBLOX_Notify"
     gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder = 500
     if syn and syn.protect_gui then syn.protect_gui(gui) end
     gui.Parent = (gethui and gethui()) or CoreGui
 
     local list = Instance.new("Frame")
     list.Name = "List"
     list.AnchorPoint = Vector2.new(1, 0)
-    list.Position = UDim2.new(1, -12, 0, 12)
-    list.Size = UDim2.new(0, 260, 1, -24)
+    list.Position = UDim2.new(1, -16, 0, 16)
+    list.Size = UDim2.new(0, 300, 1, -32)
     list.BackgroundTransparency = 1
     list.Parent = gui
 
     local layout = Instance.new("UIListLayout")
     layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Padding = UDim.new(0, 6)
+    layout.Padding = UDim.new(0, 8)
     layout.VerticalAlignment = Enum.VerticalAlignment.Top
     layout.HorizontalAlignment = Enum.HorizontalAlignment.Right
     layout.Parent = list
@@ -1054,74 +1091,227 @@ function Notify:Send(title, body, duration)
     local parent = ensureContainer()
 
     local card = Instance.new("Frame")
-    card.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
+    card.AnchorPoint = Vector2.new(1, 0)
+    card.BackgroundColor3 = THEME.Bg
     card.BorderSizePixel = 0
     card.Size = UDim2.new(1, 0, 0, 0)
     card.AutomaticSize = Enum.AutomaticSize.Y
     card.BackgroundTransparency = 1
+    card.Position = UDim2.new(1, 60, 0, 0)   -- start off-screen right
+    card.ClipsDescendants = true
     card.Parent = parent
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 7)
 
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 6)
-    corner.Parent = card
+    -- subtle gradient background
+    local grad = Instance.new("UIGradient")
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, THEME.Bg2),
+        ColorSequenceKeypoint.new(1, THEME.Bg),
+    })
+    grad.Rotation = 110
+    grad.Parent = card
 
     local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromRGB(120, 90, 220)
+    stroke.Color = THEME.Accent
     stroke.Thickness = 1
     stroke.Transparency = 1
     stroke.Parent = card
 
+    -- accent strip on the left
+    local strip = Instance.new("Frame")
+    strip.BackgroundColor3 = THEME.Accent
+    strip.BorderSizePixel = 0
+    strip.Position = UDim2.new(0, 0, 0, 6)
+    strip.Size = UDim2.new(0, 3, 1, -12)
+    strip.Parent = card
+    Instance.new("UICorner", strip).CornerRadius = UDim.new(0, 2)
+
     local pad = Instance.new("UIPadding")
-    pad.PaddingTop    = UDim.new(0, 8)
-    pad.PaddingBottom = UDim.new(0, 8)
-    pad.PaddingLeft   = UDim.new(0, 10)
-    pad.PaddingRight  = UDim.new(0, 10)
+    pad.PaddingTop    = UDim.new(0, 10)
+    pad.PaddingBottom = UDim.new(0, 12)
+    pad.PaddingLeft   = UDim.new(0, 14)
+    pad.PaddingRight  = UDim.new(0, 12)
     pad.Parent = card
 
-    local titleLabel = Instance.new("TextLabel")
-    titleLabel.BackgroundTransparency = 1
-    titleLabel.Size = UDim2.new(1, 0, 0, 16)
-    titleLabel.Font = Enum.Font.GothamBold
-    titleLabel.Text = title
-    titleLabel.TextColor3 = Color3.fromRGB(230, 230, 235)
-    titleLabel.TextTransparency = 1
-    titleLabel.TextSize = 13
-    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    titleLabel.Parent = card
+    local titleLbl = Instance.new("TextLabel")
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Size = UDim2.new(1, 0, 0, 16)
+    titleLbl.Font = Enum.Font.GothamBold
+    titleLbl.Text = title or ""
+    titleLbl.TextColor3 = THEME.Text
+    titleLbl.TextTransparency = 1
+    titleLbl.TextSize = 13
+    titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+    titleLbl.Parent = card
 
-    local bodyLabel = Instance.new("TextLabel")
-    bodyLabel.BackgroundTransparency = 1
-    bodyLabel.Position = UDim2.new(0, 0, 0, 18)
-    bodyLabel.Size = UDim2.new(1, 0, 0, 0)
-    bodyLabel.AutomaticSize = Enum.AutomaticSize.Y
-    bodyLabel.Font = Enum.Font.Gotham
-    bodyLabel.Text = body
-    bodyLabel.TextWrapped = true
-    bodyLabel.TextColor3 = Color3.fromRGB(180, 180, 190)
-    bodyLabel.TextTransparency = 1
-    bodyLabel.TextSize = 11
-    bodyLabel.TextXAlignment = Enum.TextXAlignment.Left
-    bodyLabel.Parent = card
+    local bodyLbl = Instance.new("TextLabel")
+    bodyLbl.BackgroundTransparency = 1
+    bodyLbl.Position = UDim2.new(0, 0, 0, 20)
+    bodyLbl.Size = UDim2.new(1, 0, 0, 0)
+    bodyLbl.AutomaticSize = Enum.AutomaticSize.Y
+    bodyLbl.Font = Enum.Font.Gotham
+    bodyLbl.Text = body or ""
+    bodyLbl.TextWrapped = true
+    bodyLbl.TextColor3 = THEME.Sub
+    bodyLbl.TextTransparency = 1
+    bodyLbl.TextSize = 11
+    bodyLbl.TextXAlignment = Enum.TextXAlignment.Left
+    bodyLbl.Parent = card
 
-    local inT  = TweenInfo.new(0.2, Enum.EasingStyle.Sine)
-    local outT = TweenInfo.new(0.25, Enum.EasingStyle.Sine)
+    local inT  = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+    local outT = TweenInfo.new(0.30, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
 
-    TweenService:Create(card, inT, {BackgroundTransparency = 0}):Play()
+    -- Slide in + fade in
+    TweenService:Create(card, inT, {
+        Position = UDim2.new(1, 0, 0, 0),
+        BackgroundTransparency = 0,
+    }):Play()
     TweenService:Create(stroke, inT, {Transparency = 0}):Play()
-    TweenService:Create(titleLabel, inT, {TextTransparency = 0}):Play()
-    TweenService:Create(bodyLabel, inT, {TextTransparency = 0}):Play()
+    TweenService:Create(titleLbl, inT, {TextTransparency = 0}):Play()
+    TweenService:Create(bodyLbl, inT, {TextTransparency = 0.05}):Play()
 
     task.delay(duration, function()
-        TweenService:Create(card, outT, {BackgroundTransparency = 1}):Play()
+        if not card.Parent then return end
+        TweenService:Create(card, outT, {
+            Position = UDim2.new(1, 80, 0, 0),
+            BackgroundTransparency = 1,
+        }):Play()
         TweenService:Create(stroke, outT, {Transparency = 1}):Play()
-        TweenService:Create(titleLabel, outT, {TextTransparency = 1}):Play()
-        TweenService:Create(bodyLabel, outT, {TextTransparency = 1}):Play()
-        task.wait(0.3)
+        TweenService:Create(titleLbl, outT, {TextTransparency = 1}):Play()
+        TweenService:Create(bodyLbl, outT, {TextTransparency = 1}):Play()
+        task.wait(0.35)
         card:Destroy()
     end)
 end
 
 return Notify
+
+end
+
+_modules['src/library/splash.lua'] = function()
+--[[
+    Startup splash — big centered "ROGBLOX loaded" card that pulses in
+    when the hub finishes booting, then fades out after a few seconds.
+    Drop-in: Splash.Show("Title", "Body", duration_seconds).
+]]
+
+local TweenService = game:GetService("TweenService")
+local CoreGui      = game:GetService("CoreGui")
+
+local M = {}
+
+local function makeGui()
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "ROGBLOX_Splash"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder = 1000
+    if syn and syn.protect_gui then syn.protect_gui(gui) end
+    gui.Parent = (gethui and gethui()) or CoreGui
+    return gui
+end
+
+function M.Show(title, body, duration)
+    duration = duration or 2.4
+
+    local gui = makeGui()
+
+    local card = Instance.new("Frame")
+    card.AnchorPoint = Vector2.new(0.5, 0.5)
+    card.Position = UDim2.new(0.5, 0, 0.5, 0)
+    card.Size = UDim2.new(0, 340, 0, 110)
+    card.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
+    card.BackgroundTransparency = 1
+    card.BorderSizePixel = 0
+    card.Parent = gui
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 12)
+
+    local s = Instance.new("UIStroke")
+    s.Color = Color3.fromRGB(140, 100, 255)
+    s.Thickness = 1.5
+    s.Transparency = 1
+    s.Parent = card
+
+    -- gradient bg
+    local grad = Instance.new("UIGradient")
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0,  Color3.fromRGB(28, 26, 44)),
+        ColorSequenceKeypoint.new(1,  Color3.fromRGB(18, 16, 30)),
+    })
+    grad.Rotation = 120
+    grad.Parent = card
+
+    -- accent strip
+    local strip = Instance.new("Frame")
+    strip.BackgroundColor3 = Color3.fromRGB(140, 100, 255)
+    strip.Position = UDim2.new(0, 12, 0.5, -22)
+    strip.Size = UDim2.new(0, 4, 0, 0)
+    strip.BorderSizePixel = 0
+    strip.Parent = card
+    Instance.new("UICorner", strip).CornerRadius = UDim.new(0, 2)
+
+    -- title (gradient text effect via UIGradient on a TextLabel)
+    local titleLbl = Instance.new("TextLabel")
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Position = UDim2.new(0, 28, 0, 18)
+    titleLbl.Size = UDim2.new(1, -44, 0, 30)
+    titleLbl.Font = Enum.Font.GothamBold
+    titleLbl.Text = title or "ROGBLOX"
+    titleLbl.TextColor3 = Color3.fromRGB(245, 240, 255)
+    titleLbl.TextSize = 22
+    titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+    titleLbl.TextTransparency = 1
+    titleLbl.Parent = card
+
+    local tg = Instance.new("UIGradient")
+    tg.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0,    Color3.fromRGB(210, 175, 255)),
+        ColorSequenceKeypoint.new(0.5,  Color3.fromRGB(140, 100, 255)),
+        ColorSequenceKeypoint.new(1,    Color3.fromRGB(255, 130, 200)),
+    })
+    tg.Parent = titleLbl
+
+    local bodyLbl = Instance.new("TextLabel")
+    bodyLbl.BackgroundTransparency = 1
+    bodyLbl.Position = UDim2.new(0, 28, 0, 52)
+    bodyLbl.Size = UDim2.new(1, -44, 0, 44)
+    bodyLbl.Font = Enum.Font.Gotham
+    bodyLbl.Text = body or ""
+    bodyLbl.TextColor3 = Color3.fromRGB(170, 175, 195)
+    bodyLbl.TextSize = 12
+    bodyLbl.TextXAlignment = Enum.TextXAlignment.Left
+    bodyLbl.TextYAlignment = Enum.TextYAlignment.Top
+    bodyLbl.TextWrapped = true
+    bodyLbl.TextTransparency = 1
+    bodyLbl.Parent = card
+
+    -- starting pose: slightly smaller + invisible, then ease into place
+    card.Size = UDim2.new(0, 300, 0, 96)
+
+    local easeIn  = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+    local easeOut = TweenInfo.new(0.30, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+
+    TweenService:Create(card, easeIn, {
+        BackgroundTransparency = 0.05,
+        Size = UDim2.new(0, 340, 0, 110),
+    }):Play()
+    TweenService:Create(s,        easeIn, {Transparency = 0}):Play()
+    TweenService:Create(titleLbl, easeIn, {TextTransparency = 0}):Play()
+    TweenService:Create(bodyLbl,  easeIn, {TextTransparency = 0.05}):Play()
+    TweenService:Create(strip,    easeIn, {Size = UDim2.new(0, 4, 0, 44)}):Play()
+
+    task.delay(duration, function()
+        TweenService:Create(card,     easeOut, {BackgroundTransparency = 1}):Play()
+        TweenService:Create(s,        easeOut, {Transparency = 1}):Play()
+        TweenService:Create(titleLbl, easeOut, {TextTransparency = 1}):Play()
+        TweenService:Create(bodyLbl,  easeOut, {TextTransparency = 1}):Play()
+        TweenService:Create(strip,    easeOut, {Size = UDim2.new(0, 4, 0, 0)}):Play()
+        task.wait(0.4)
+        gui:Destroy()
+    end)
+end
+
+return M
 
 end
 
@@ -6973,6 +7163,7 @@ local BASE = "https://raw.githubusercontent.com/mkultra110/rogblox/" .. BRANCH .
 -- libraries first
 local UI           = fetch("src/library/ui.lua")
 local Notify       = fetch("src/library/notify.lua")
+local Splash       = fetch("src/library/splash.lua")
 local SaveManager  = fetch("src/library/savemanager.lua")
 local ThemeManager = fetch("src/library/thememanager.lua")
 local Config       = fetch("src/config.lua")
@@ -7018,22 +7209,34 @@ local ctx = {
     Aimbot      = Aimbot,
 }
 
+-- Helper: builds a tab and runs the module's Build inside pcall so
+-- a single broken module can't take the whole hub down. Logs the
+-- error to the console and continues to the next module.
+local loadFailures = {}
+local function safeBuild(name, mod)
+    local ok, err = pcall(function() mod.Build(Window:AddTab(name), ctx) end)
+    if not ok then
+        table.insert(loadFailures, name)
+        warn(("[ROGBLOX] module %s failed to build: %s"):format(name, tostring(err)))
+    end
+end
+
 -- Aimbot first so HUD can read its LockedTarget through ctx.
-Aimbot.Build(    Window:AddTab("Aimbot"),     ctx)
-HUD.Build(       Window:AddTab("HUD"),        ctx)
-ESP.Build(       Window:AddTab("Visuals"),    ctx)
-Combat.Build(    Window:AddTab("Combat+"),    ctx)
-Movement.Build(  Window:AddTab("Movement"),   ctx)
-Teleport.Build(  Window:AddTab("Teleport"),   ctx)
-World.Build(     Window:AddTab("World"),      ctx)
-Farm.Build(      Window:AddTab("Auto"),       ctx)
-Games.Build(     Window:AddTab("Games"),      ctx)
-PlayerList.Build(Window:AddTab("Players"),    ctx)
-Console.Build(   Window:AddTab("Console"),    ctx)
-Scripthub.Build( Window:AddTab("Scripthub"),  ctx)
-Stats.Build(     Window:AddTab("Stats"),      ctx)
-Macro.Build(     Window:AddTab("Macro"),      ctx)
-Misc.Build(      Window:AddTab("Misc"),       ctx)
+safeBuild("Aimbot",    Aimbot)
+safeBuild("HUD",       HUD)
+safeBuild("Visuals",   ESP)
+safeBuild("Combat+",   Combat)
+safeBuild("Movement",  Movement)
+safeBuild("Teleport",  Teleport)
+safeBuild("World",     World)
+safeBuild("Auto",      Farm)
+safeBuild("Games",     Games)
+safeBuild("Players",   PlayerList)
+safeBuild("Console",   Console)
+safeBuild("Scripthub", Scripthub)
+safeBuild("Stats",     Stats)
+safeBuild("Macro",     Macro)
+safeBuild("Misc",      Misc)
 
 local SettingsTab = Window:AddTab("Settings")
 local cfgSection = SettingsTab:AddSection("Config")
@@ -7120,7 +7323,29 @@ _G.ROGBLOX = {
     end,
 }
 
-Notify:Send("ROGBLOX", "v0.5.0 loaded - press RightCtrl to toggle UI", 4)
+-- ----- Startup splash + notifications -----
+-- Show a centered "ROGBLOX loaded" card for a couple seconds, then
+-- raise the standard toast. If any modules failed to build, surface
+-- them so the user knows the hub is partially up.
+local moduleCount = 15
+local builtCount  = moduleCount - #loadFailures
+pcall(function()
+    Splash.Show(
+        "ROGBLOX v0.5.0",
+        string.format("%d / %d modules ready. Press RightCtrl to toggle the menu.",
+            builtCount, moduleCount),
+        2.6
+    )
+end)
+Notify:Send("ROGBLOX",
+    "Loaded - press RightCtrl in-game to open the menu.", 4)
+if #loadFailures > 0 then
+    task.delay(2.8, function()
+        Notify:Send("Warning",
+            "Some modules failed to load: " .. table.concat(loadFailures, ", "), 6)
+    end)
+end
+
 pcall(Config.Load)
 -- Honor autoload profile if the user set one.
 task.defer(function()

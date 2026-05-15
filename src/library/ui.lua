@@ -161,6 +161,30 @@ function UI:CreateWindow(opts)
     corner(10, root)
     stroke(THEME.Stroke, 1, root)
 
+    -- subtle window background gradient (panel-darker -> background)
+    new("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, THEME.Panel2),
+            ColorSequenceKeypoint.new(1, THEME.Background),
+        }),
+        Rotation = 130,
+        Parent = root,
+    })
+
+    -- soft accent halo behind the title bar (purely decorative)
+    do
+        local glow = new("Frame", {
+            Parent = root,
+            BackgroundColor3 = THEME.Accent,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 14, 0, -8),
+            Size = UDim2.new(0, 220, 0, 14),
+            BackgroundTransparency = 0.85,
+            ZIndex = 0,
+        })
+        corner(7, glow)
+    end
+
     -- Title bar
     local titleBar = new("Frame", {
         Parent = root,
