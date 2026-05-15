@@ -42,9 +42,13 @@ local function fallback(class, props)
             if self._part then self._part:Destroy(); self._part = nil end
         end,
         Set = function(self, k, v)
-            if k == "Visible" then self._part.Parent = v and workspace or nil
-            elseif k == "Color" then self._frame.BackgroundColor3 = v; if self._frame.TextColor3 then self._frame.TextColor3 = v end
-            elseif k == "Text" and self._frame.Text then self._frame.Text = v end
+            if k == "Visible" then
+                self._part.Parent = v and workspace or nil
+            elseif k == "Color" then
+                self._frame.BackgroundColor3 = v
+                if self._frame:IsA("TextLabel") then self._frame.TextColor3 = v end
+            elseif k == "Text" and self._frame:IsA("TextLabel") then
+                self._frame.Text = v
             end
         end,
     }

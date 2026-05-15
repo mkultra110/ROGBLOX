@@ -20,6 +20,7 @@ local state = {
 }
 
 local conns = {}
+local alive = false               -- gate that lets background loops exit on Unload
 
 local function getRoot()
     local lp = Players.LocalPlayer
@@ -35,8 +36,8 @@ local function findNearestNPC()
     for _, obj in ipairs(Workspace:GetDescendants()) do
         if obj:IsA("Humanoid") and obj.Health > 0 then
             local model = obj.Parent
-            local hrp = model and model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso")
-            local plr = Players:GetPlayerFromCharacter(model)
+            local hrp = model and (model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso"))
+            local plr = model and Players:GetPlayerFromCharacter(model)
             if hrp and not plr then
                 if needle == "" or model.Name:lower():find(needle, 1, true) then
                     local d = (hrp.Position - root.Position).Magnitude
@@ -51,13 +52,14 @@ local function findNearestNPC()
 end
 
 function M.Build(tab, ctx)
+    alive = true
     local clickSec = tab:AddSection("Auto Clicker")
     clickSec:AddToggle("Enabled", false, function(v) state.AutoClick = v end)
     clickSec:AddSlider("CPS", 1, 60, 16, function(v) state.CPS = v end)
     clickSec:AddLabel("Tip: most games block mouse1press detection; if it doesn't fire, set a hotkey.")
 
     task.spawn(function()
-        while true do
+        while alive do
             if state.AutoClick then
                 pcall(function()
                     if mouse1click then mouse1click()
@@ -74,7 +76,7 @@ function M.Build(tab, ctx)
     attackSec:AddToggle("Activate equipped tool", false, function(v) state.AutoAttack = v end)
     attackSec:AddSlider("Rate (sec)", 0.05, 5, 0.4, function(v) state.AttackRate = v end)
     task.spawn(function()
-        while true do
+        while alive do
             if state.AutoAttack then
                 local lp = Players.LocalPlayer
                 local char = lp and lp.Character
@@ -116,7 +118,12 @@ function M.Build(tab, ctx)
 end
 
 function M.Unload()
+    alive = false
+    state.AutoClick = false
+    state.AutoAttack = false
+    state.NearestNPC = false
     for _, c in pairs(conns) do if c.Disconnect then pcall(function() c:Disconnect() end) end end
+    conns = {}
 end
 
 M.State = state

@@ -54,16 +54,21 @@ function M.Distance(a, b)
     return (a.Position - b.Position).Magnitude
 end
 
--- Line of sight check using Raycast
-function M.HasLOS(fromPart, toPart, ignoreList)
-    if not fromPart or not toPart then return false end
+-- Line of sight check using Raycast. Accepts either a BasePart or a
+-- table with a Position field as the "from".
+function M.HasLOS(from, toPart, ignoreList)
+    if not from or not toPart then return false end
+    local origin = (typeof(from) == "Instance" and from.Position) or from.Position
+    if not origin then return false end
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
-    local ignore = ignoreList or {}
-    table.insert(ignore, M.LocalCharacter())
+    local ignore = {M.LocalCharacter()}
+    if ignoreList then
+        for _, v in ipairs(ignoreList) do table.insert(ignore, v) end
+    end
     params.FilterDescendantsInstances = ignore
-    local dir = (toPart.Position - fromPart.Position)
-    local result = Workspace:Raycast(fromPart.Position, dir, params)
+    local dir = (toPart.Position - origin)
+    local result = Workspace:Raycast(origin, dir, params)
     if not result then return true end
     return result.Instance:IsDescendantOf(toPart.Parent)
 end
@@ -90,7 +95,7 @@ function M.ClosestToScreenPoint(screenPoint, opts)
                         local dy = screen.Y - screenPoint.Y
                         local dist = math.sqrt(dx * dx + dy * dy)
                         if dist <= maxFov and (not bestDist or dist < bestDist) then
-                            if not checkLOS or M.HasLOS(camera.CFrame.p and {Position = camera.CFrame.p} or camera, target) then
+                            if not checkLOS or M.HasLOS({Position = camera.CFrame.Position}, target) then
                                 bestDist = dist
                                 closest = plr
                             end

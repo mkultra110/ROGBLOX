@@ -183,13 +183,14 @@ local function updateCrosshair()
             {Vector2.new(cx, cy - gap - sz), Vector2.new(cx, cy - gap)},
             {Vector2.new(cx, cy + gap),       Vector2.new(cx, cy + gap + sz)},
         }
-        local idx = 1
         if state.XHairOutline then
             for i = 1, 4 do
-                local line = xHairParts[idx + 4]; idx = idx + 0
-                line.From = segs[i][1]; line.To = segs[i][2]
-                line.Color = Color3.new(0, 0, 0); line.Thickness = th + 2
-                line.Visible = true
+                local line = xHairParts[i + 4]
+                if line then
+                    line.From = segs[i][1]; line.To = segs[i][2]
+                    line.Color = Color3.new(0, 0, 0); line.Thickness = th + 2
+                    line.Visible = true
+                end
             end
         end
         for i = 1, 4 do

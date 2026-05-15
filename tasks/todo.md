@@ -1,61 +1,57 @@
-# ROGBLOX — comprehensive audit, fix, beautify, expand
+# ROGBLOX pro-tier upgrade — batch 4
 
-Source of audit: sub-agent verifier (see commit 836f33d).
-Additional spec from LO: "test everything, audit everything, fix
-everything; loader and cheat must be visually super beautiful."
+Source: verifier agent findings + comprehensive web research on top-tier
+hubs (Linoria, Stefanuk12 Aiming, Open-Aimbot, ESP libraries, devforum).
 
-## Bugs (verifier-flagged)
+## Critical fixes (verifier)
 
-- [x] hud.lua:189 — crosshair outline indexing broken (`idx + 0` no-op)
-- [x] movement.lua:51 — dead conditional empty body
-- [x] autofarm.lua:38 — precedence bug: `model:FindFirstChild` called when `model` nil
-- [x] utils/drawing.lua:46 — fallback Set Color reads TextColor3 on Frame
+- [ ] hud.lua:189 crosshair outline indexing
+- [ ] movement.lua:51 dead conditional
+- [ ] autofarm.lua:38 precedence bug
+- [ ] utils/drawing.lua:46 fallback TextColor3 on Frame
 
-## Concerns / leaks (verifier-flagged)
+## Leak fixes (verifier)
 
-- [x] combat_extras.lua — silent-aim metatable hook never restored / re-applies
-- [x] combat_extras.lua — hitbox/god/antiaim conns + kill-aura task not cleaned up
-- [x] autofarm.lua — two unbounded `while task.wait` loops survive Unload
-- [x] misc.lua — chat-spam loop survives Unload
-- [x] misc.lua — freecam keybind desyncs from underlying state
-- [x] world.lua — TextChatService.OnIncomingMessage never restored
-- [x] ui.lua — AddLabel/AddDivider don't call trackComponent (search-filter inconsistency)
-- [x] ui.lua — multi-dropdown skips initial callback
-- [x] players.lua — HasLOS mutates caller's ignore list
-- [x] players.lua — tortured `camera.CFrame.p and {} or camera` expression
+- [ ] combat_extras.lua silent-aim hook never restored / re-applies
+- [ ] combat_extras.lua hitbox/god/antiAim/killAura not cleaned up
+- [ ] autofarm.lua unbounded loops survive Unload
+- [ ] misc.lua chat-spam loop survives Unload
+- [ ] misc.lua freecam keybind desync
+- [ ] world.lua OnIncomingMessage never restored
+- [ ] ui.lua AddLabel/AddDivider don't track for search
+- [ ] ui.lua multi-dropdown skips initial callback
+- [ ] players.lua HasLOS mutates caller's list
+- [ ] players.lua tortured expression
 
-## Visual beautification
+## Aimbot v2 (matching Stefanuk12 / Open-Aimbot)
 
-- [ ] **Loader (launch.ps1)** — rewrite in WPF
-  - Borderless window, rounded corners, gradient background
-  - Big logo with gradient text fill
-  - Glowing accent button with hover state + press animation
-  - Animated status text with check icons
-  - Drop shadow
-- [ ] **In-game UI (ui.lua)** — visual upgrade
-  - Background gradient on window (dark to very dark)
-  - Title bar gradient + soft inner glow
-  - Accent strip glow effect (UIStroke + tween)
-  - Section headers with gradient underline
-  - Slider fill gradient
-  - Toggle: smoother spring animation, glow when on
-  - Notifications: slide-in from right with bounce
-  - Tab indicator: pulse on selection
-  - Optional blur backdrop (DepthOfFieldEffect / BlurEffect on Lighting)
-  - Better fonts (`GothamSSm` if available, fallback `Gotham`)
+- [ ] Hook all 5 Mouse props: Target, Hit, X, Y, UnitRay
+- [ ] Hook 4 Workspace methods: Raycast, FindPartOnRay, FindPartOnRayWithIgnoreList, FindPartOnRayWithWhitelist
+- [ ] Type validation on hook arguments
+- [ ] checkcaller() bypass for our own raycasts
+- [ ] Velocity history buffer (last 12 frames per player)
+- [ ] Exponential smoothing on velocity for prediction
+- [ ] Ballistics solver (projectile speed + gravity) for non-hitscan games
+- [ ] AdditionalCheck pluggable callback
 
-## v0.4 features (matching/exceeding premium hubs)
+## ESP v2 (matching pro libraries)
 
-- [ ] Aimbot: Whitelist (TargetList), explicit Toggle mode (vs Hold), offset modes (Static/Dynamic/Auto), camera shake option, resolver for spinning targets
-- [ ] ESP: Drawing object pool, Skeleton ESP (R6/R15 bone tables)
-- [ ] HUD: Keybind list overlay
-- [ ] Per-PlaceId profile auto-load on join
+- [ ] Drawing object pool (pre-allocate, reuse, don't GC)
+- [ ] Distance culling — hide vs destroy
+- [ ] Tick throttle — 30Hz update for far players, 60Hz for closest
+- [ ] Skeleton ESP — R6 bone table (Head/Torso/limbs)
+- [ ] Skeleton ESP — R15 bone table (joint hierarchy)
+- [ ] Weapon ESP — show currently equipped Tool
 
-## Verification
+## UI v3 (matching Linoria)
 
-- [ ] Re-spawn audit agent after fixes land for a second pass
-- [ ] Manual sanity check on cross-references after UI edits
+- [ ] TabBox component — sub-tabs within a tab
+- [ ] GroupBox with explicit left/right column placement
+- [ ] Dependency box — show component only when condition met
+- [ ] Theme Manager — preset themes + custom
+- [ ] Save Manager — named per-PlaceId profiles, JSON
+- [ ] Keybind overlay (HUD) — show all active hotkeys top-right
 
 ## Review
 
-_to be filled in after this batch._
+_To be filled in._

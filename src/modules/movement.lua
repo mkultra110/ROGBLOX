@@ -48,7 +48,6 @@ end
 local function applyJump()
     local hum = getHum()
     if not hum then return end
-    if hum:GetAttribute("JumpPower") ~= nil then end
     if hum.UseJumpPower then
         hum.JumpPower = state.JumpEnabled and state.Jump or 50
     else

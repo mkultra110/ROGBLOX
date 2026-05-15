@@ -529,6 +529,7 @@ function Section:AddLabel(text)
         TextSize = 12,
         TextXAlignment = Enum.TextXAlignment.Left,
     })
+    trackComponent(self, text, lbl)
     return {Set = function(_, t) lbl.Text = t end, Frame = lbl}
 end
 
@@ -539,6 +540,7 @@ function Section:AddDivider()
         BorderSizePixel = 0,
         Size = UDim2.new(1, 0, 0, 1),
     })
+    trackComponent(self, "", d)
     return {Frame = d}
 end
 
@@ -795,7 +797,7 @@ function Section:AddDropdown(text, options, default, callback, opts)
 
     valueBtn.MouseButton1Click:Connect(function() menu.Visible = not menu.Visible end)
 
-    if callback and not multi then task.spawn(callback, current) end
+    if callback then task.spawn(callback, current) end
     trackComponent(self, text, row)
     return {
         Set = function(_, v) current = v; refreshLabel(); if callback then task.spawn(callback, current) end end,
