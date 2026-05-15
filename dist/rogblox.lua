@@ -5560,6 +5560,429 @@ local function buildBrookhaven(tab)
     end)
 end
 
+-- ---------- Game: Island Royale ----------
+
+local function buildIslandRoyale(tab)
+    local sec = tab:AddSection("Island Royale")
+    sec:AddLabel("Detected: Island Royale (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddSlider("Walkspeed", 16, 100, 40, function(v)
+        local hum = getHum(); if hum then hum.WalkSpeed = v end
+    end)
+    sec:AddButton("Grab all dropped loot in radius", function()
+        local root = getRoot(); if not root then return end
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("Tool") then
+                local h = obj:FindFirstChild("Handle")
+                if h and (h.Position - root.Position).Magnitude < 150 then
+                    h.CFrame = root.CFrame
+                end
+            end
+        end
+    end)
+    sec:AddToggle("Auto-loot crates", false, function(v)
+        if v then
+            conns.irLoot = RunService.Heartbeat:Connect(function()
+                local root = getRoot(); if not root then return end
+                for _, obj in ipairs(Workspace:GetDescendants()) do
+                    if obj.Name:lower():find("crate") and obj:IsA("BasePart") then
+                        local d = (obj.Position - root.Position).Magnitude
+                        if d < 60 then obj.CFrame = root.CFrame end
+                    end
+                end
+            end)
+        else
+            if conns.irLoot then conns.irLoot:Disconnect(); conns.irLoot = nil end
+        end
+    end)
+end
+
+-- ---------- Game: BIG Paintball ----------
+
+local function buildBigPaintball(tab)
+    local sec = tab:AddSection("BIG Paintball")
+    sec:AddLabel("Detected: BIG Paintball (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Auto-spray", false, function(v)
+        if v then
+            conns.bpSpray = RunService.Heartbeat:Connect(function()
+                pcall(function() if mouse1press and mouse1release then mouse1press(); task.wait(); mouse1release() end end)
+            end)
+        else
+            if conns.bpSpray then conns.bpSpray:Disconnect(); conns.bpSpray = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Mad Paintball 2 ----------
+
+local function buildMadPaintball2(tab)
+    local sec = tab:AddSection("Mad Paintball 2")
+    sec:AddLabel("Detected: Mad Paintball 2 (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddSlider("Walkspeed", 16, 80, 30, function(v)
+        local hum = getHum(); if hum then hum.WalkSpeed = v end
+    end)
+    sec:AddToggle("Auto-fire", false, function(v)
+        if v then
+            conns.mp2Fire = RunService.Heartbeat:Connect(function()
+                pcall(function() if mouse1click then mouse1click() end end)
+            end)
+        else
+            if conns.mp2Fire then conns.mp2Fire:Disconnect(); conns.mp2Fire = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Project Lazarus ----------
+
+local function buildProjectLazarus(tab)
+    local sec = tab:AddSection("Project Lazarus")
+    sec:AddLabel("Detected: Project Lazarus (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Infinite ammo (client value)", false, function(v)
+        if v then
+            conns.plAmmo = RunService.Heartbeat:Connect(function()
+                local char = getChar()
+                local tool = char and char:FindFirstChildOfClass("Tool")
+                if tool then
+                    for _, ch in ipairs(tool:GetDescendants()) do
+                        if ch:IsA("NumberValue") and (ch.Name:lower():find("ammo") or ch.Name:lower():find("mag")) then
+                            ch.Value = 999
+                        end
+                    end
+                end
+            end)
+        else
+            if conns.plAmmo then conns.plAmmo:Disconnect(); conns.plAmmo = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Power / Lifting / Muscle / Ninja sims ----------
+
+local function buildStatSim(tab, name)
+    local sec = tab:AddSection(name)
+    sec:AddLabel("Detected: " .. name .. " (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Auto-mash mouse1 (stat farm)", false, function(v)
+        if v then
+            conns.statMash = RunService.Heartbeat:Connect(function()
+                pcall(function() if mouse1click then mouse1click() end end)
+            end)
+        else
+            if conns.statMash then conns.statMash:Disconnect(); conns.statMash = nil end
+        end
+    end)
+    sec:AddToggle("Auto-rebirth check (every 30s)", false, function(v)
+        if v then
+            conns.statRebirth = task.spawn(function()
+                while alive do
+                    task.wait(30)
+                    pcall(function() fireRemote("Rebirth") end)
+                end
+            end)
+        end
+    end)
+end
+local function buildPowerSim(tab)    buildStatSim(tab, "Power Simulator")    end
+local function buildLiftingSim(tab)  buildStatSim(tab, "Lifting Simulator")  end
+local function buildMuscleLegend(tab)buildStatSim(tab, "Muscle Legend")      end
+local function buildNinjaLegends(tab)buildStatSim(tab, "Ninja Legends")      end
+
+-- ---------- Game: One Piece / JoJo / anime ----------
+
+local function buildAnimeFarm(tab, name)
+    local sec = tab:AddSection(name)
+    sec:AddLabel("Detected: " .. name .. " (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Auto-attack nearest enemy", false, function(v)
+        if v then
+            conns.afAttack = RunService.Heartbeat:Connect(function()
+                local root = getRoot(); if not root then return end
+                local best, bestDist
+                for _, obj in ipairs(Workspace:GetDescendants()) do
+                    if obj:IsA("Humanoid") and obj.Health > 0 then
+                        local hrp = obj.Parent and obj.Parent:FindFirstChild("HumanoidRootPart")
+                        local plr = obj.Parent and Players:GetPlayerFromCharacter(obj.Parent)
+                        if hrp and not plr then
+                            local d = (hrp.Position - root.Position).Magnitude
+                            if not bestDist or d < bestDist then best, bestDist = hrp, d end
+                        end
+                    end
+                end
+                if best and (best.Position - root.Position).Magnitude < 200 then
+                    root.CFrame = best.CFrame * CFrame.new(0, 0, 3)
+                    local char = getChar()
+                    if char then
+                        for _, t in ipairs(char:GetChildren()) do
+                            if t:IsA("Tool") then pcall(function() t:Activate() end) end
+                        end
+                    end
+                end
+            end)
+        else
+            if conns.afAttack then conns.afAttack:Disconnect(); conns.afAttack = nil end
+        end
+    end)
+end
+local function buildOnePieceLegendary(tab) buildAnimeFarm(tab, "One Piece Legendary") end
+local function buildOnePieceUltimate(tab)  buildAnimeFarm(tab, "One Piece Ultimate")  end
+local function buildOnePunchManIJ(tab)     buildAnimeFarm(tab, "One Punch Man IJ")    end
+local function buildJoJoBlox(tab)          buildAnimeFarm(tab, "JoJo Blox")           end
+local function buildStandsOnline(tab)      buildAnimeFarm(tab, "Stands Online")       end
+local function buildABizarreDay(tab)       buildAnimeFarm(tab, "A Bizarre Day")       end
+
+-- ---------- Game: R2DA / Zombie Rush / Zombie Strike ----------
+
+local function buildZombieGame(tab, name)
+    local sec = tab:AddSection(name)
+    sec:AddLabel("Detected: " .. name .. " (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Auto-shoot zombies", false, function(v)
+        if v then
+            conns.zomShoot = RunService.Heartbeat:Connect(function()
+                pcall(function() if mouse1click then mouse1click() end end)
+            end)
+        else
+            if conns.zomShoot then conns.zomShoot:Disconnect(); conns.zomShoot = nil end
+        end
+    end)
+    sec:AddSlider("Walkspeed", 16, 80, 25, function(v)
+        local hum = getHum(); if hum then hum.WalkSpeed = v end
+    end)
+end
+local function buildR2DA(tab)         buildZombieGame(tab, "R2DA")         end
+local function buildZombieRush(tab)   buildZombieGame(tab, "Zombie Rush")  end
+local function buildZombieStrike(tab) buildZombieGame(tab, "Zombie Strike") end
+
+-- ---------- Game: Vehicle Tycoon ----------
+
+local function buildVehicleTycoon(tab)
+    local sec = tab:AddSection("Vehicle Tycoon")
+    sec:AddLabel("Detected: Vehicle Tycoon (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Auto-collect droppers", false, function(v)
+        if v then
+            conns.vtDrop = RunService.Heartbeat:Connect(function()
+                local root = getRoot(); if not root then return end
+                for _, obj in ipairs(Workspace:GetDescendants()) do
+                    if obj.Name:lower():find("part") and obj:IsA("BasePart") and obj.Name ~= "HumanoidRootPart" then
+                        local d = (obj.Position - root.Position).Magnitude
+                        if d < 80 then obj.CFrame = root.CFrame end
+                    end
+                end
+            end)
+        else
+            if conns.vtDrop then conns.vtDrop:Disconnect(); conns.vtDrop = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Sound Space ----------
+
+local function buildSoundSpace(tab)
+    local sec = tab:AddSection("Sound Space")
+    sec:AddLabel("Detected: Sound Space (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddLabel("Auto-play: not implemented (varies per version).")
+    sec:AddSlider("Cursor sensitivity tweak", 0.1, 5, 1, function(v) end, {Decimals = 2})
+end
+
+-- ---------- Game: Mayday ----------
+
+local function buildMayday(tab)
+    local sec = tab:AddSection("Mayday")
+    sec:AddLabel("Detected: Mayday (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Hold-fire", false, function(v)
+        if v then
+            conns.mdFire = RunService.Heartbeat:Connect(function()
+                pcall(function() if mouse1press and mouse1release then mouse1press(); mouse1release() end end)
+            end)
+        else
+            if conns.mdFire then conns.mdFire:Disconnect(); conns.mdFire = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Squadron ----------
+
+local function buildSquadron(tab)
+    local sec = tab:AddSection("Squadron")
+    sec:AddLabel("Detected: Squadron (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Auto-fire", false, function(v)
+        if v then
+            conns.sqFire = RunService.Heartbeat:Connect(function()
+                pcall(function() if mouse1click then mouse1click() end end)
+            end)
+        else
+            if conns.sqFire then conns.sqFire:Disconnect(); conns.sqFire = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Redwood Prison ----------
+
+local function buildRedwoodPrison(tab)
+    local sec = tab:AddSection("Redwood Prison")
+    sec:AddLabel("Detected: Redwood Prison (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddSlider("Walkspeed", 16, 100, 30, function(v)
+        local hum = getHum(); if hum then hum.WalkSpeed = v end
+    end)
+    sec:AddButton("Open all cells", function()
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj.Name:lower():find("cell") and obj:IsA("BasePart") then
+                pcall(function() obj.CanCollide = false; obj.Transparency = 0.7 end)
+            end
+        end
+    end)
+end
+
+-- ---------- Game: Wild Revolvers / No-Scope Sniping / Bullet Hell ----------
+
+local function buildGenericShooter(tab, name)
+    local sec = tab:AddSection(name)
+    sec:AddLabel("Detected: " .. name .. " (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Auto-fire", false, function(v)
+        if v then
+            conns.gsFire = RunService.Heartbeat:Connect(function()
+                pcall(function() if mouse1click then mouse1click() end end)
+            end)
+        else
+            if conns.gsFire then conns.gsFire:Disconnect(); conns.gsFire = nil end
+        end
+    end)
+    sec:AddSlider("Walkspeed", 16, 80, 25, function(v)
+        local hum = getHum(); if hum then hum.WalkSpeed = v end
+    end)
+end
+local function buildWildRevolvers(tab)   buildGenericShooter(tab, "Wild Revolvers")    end
+local function buildNoScopeSniping(tab)  buildGenericShooter(tab, "No Scope Sniping")  end
+local function buildBulletHell(tab)      buildGenericShooter(tab, "Bullet Hell")       end
+local function buildOperationScorpion(tab) buildGenericShooter(tab, "Operation Scorpion") end
+
+-- ---------- Game: Typical Colors 2 ----------
+
+local function buildTypicalColors2(tab)
+    local sec = tab:AddSection("Typical Colors 2")
+    sec:AddLabel("Detected: TC2 (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Hold-fire", false, function(v)
+        if v then
+            conns.tc2Fire = RunService.Heartbeat:Connect(function()
+                pcall(function() if mouse1press and mouse1release then mouse1press(); mouse1release() end end)
+            end)
+        else
+            if conns.tc2Fire then conns.tc2Fire:Disconnect(); conns.tc2Fire = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Skywars ----------
+
+local function buildSkywars(tab)
+    local sec = tab:AddSection("Skywars")
+    sec:AddLabel("Detected: Skywars (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddSlider("Walkspeed", 16, 80, 28, function(v)
+        local hum = getHum(); if hum then hum.WalkSpeed = v end
+    end)
+    sec:AddButton("Pull nearby chests", function()
+        local root = getRoot(); if not root then return end
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj.Name:lower():find("chest") and obj:IsA("BasePart") then
+                local d = (obj.Position - root.Position).Magnitude
+                if d < 100 then obj.CFrame = root.CFrame end
+            end
+        end
+    end)
+end
+
+-- ---------- Game: Infinity RPG 2 ----------
+
+local function buildInfinityRpg2(tab)
+    local sec = tab:AddSection("Infinity RPG 2")
+    sec:AddLabel("Detected: Infinity RPG 2 (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Auto-attack nearest mob", false, function(v)
+        if v then
+            buildAnimeFarm(tab, "(auto)")
+        end
+    end)
+end
+
+-- ---------- Game: AceOfSpadez ----------
+
+local function buildAceOfSpadez(tab)
+    local sec = tab:AddSection("AceOfSpadez")
+    sec:AddLabel("Detected: AceOfSpadez (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Hold-fire", false, function(v)
+        if v then
+            conns.aosFire = RunService.Heartbeat:Connect(function()
+                pcall(function() if mouse1press and mouse1release then mouse1press(); mouse1release() end end)
+            end)
+        else
+            if conns.aosFire then conns.aosFire:Disconnect(); conns.aosFire = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Assassin ----------
+
+local function buildAssassinGame(tab)
+    local sec = tab:AddSection("Assassin")
+    sec:AddLabel("Detected: Assassin (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddButton("Reveal target", function()
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= Players.LocalPlayer then
+                local char = plr.Character
+                local knife = char and (char:FindFirstChild("Knife") or char:FindFirstChild("KnifeModel"))
+                if knife then print("[Assassin] target with knife: " .. plr.Name) end
+            end
+        end
+    end)
+end
+
+-- ---------- Game: RB World 3 ----------
+
+local function buildRBWorld3(tab)
+    local sec = tab:AddSection("RB World 3")
+    sec:AddLabel("Detected: RB World 3 (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddSlider("Walkspeed", 16, 60, 22, function(v)
+        local hum = getHum(); if hum then hum.WalkSpeed = v end
+    end)
+end
+
+-- ---------- Game: Color Craze ----------
+
+local function buildColorCraze(tab)
+    local sec = tab:AddSection("Color Craze")
+    sec:AddLabel("Detected: Color Craze (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddSlider("Walkspeed", 16, 100, 32, function(v)
+        local hum = getHum(); if hum then hum.WalkSpeed = v end
+    end)
+end
+
+-- ---------- Game: Esper Online ----------
+
+local function buildEsperOnline(tab)
+    local sec = tab:AddSection("Esper Online")
+    sec:AddLabel("Detected: Esper Online (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddSlider("Walkspeed", 16, 80, 24, function(v)
+        local hum = getHum(); if hum then hum.WalkSpeed = v end
+    end)
+end
+
+-- ---------- Game: Terminal Railways ----------
+
+local function buildTerminalRailways(tab)
+    local sec = tab:AddSection("Terminal Railways")
+    sec:AddLabel("Detected: Terminal Railways (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddSlider("Walkspeed", 16, 80, 24, function(v)
+        local hum = getHum(); if hum then hum.WalkSpeed = v end
+    end)
+end
+
+-- ---------- Game: Rumble Quest ----------
+
+local function buildRumbleQuest(tab)
+    local sec = tab:AddSection("Rumble Quest")
+    sec:AddLabel("Detected: Rumble Quest (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Auto-attack nearest mob", false, function(v)
+        if v then
+            buildAnimeFarm(tab, "(rumble-auto)")
+        end
+    end)
+end
+
 -- ---------- Category-wide builders ----------
 -- Stand-in features that work for an entire game category.
 
@@ -5739,12 +6162,48 @@ function M.Build(tab, ctx)
     elseif detected == "KAT (Knife Ability Test)" or detected == "KAT" then buildKAT(tab)
     elseif detected == "Jailbreak"        then buildJailbreak(tab)
     elseif detected == "Pet Simulator X"  then buildPetSimX(tab)
-    elseif detected == "Counter Blox"     then buildCounterBlox(tab)
-    elseif detected == "Strucid"          then buildStrucid(tab)
-    elseif detected == "Bad Business"     then buildBadBusiness(tab)
-    elseif detected == "Prison Life"      then buildPrisonLife(tab)
-    elseif detected == "Adopt Me"         then buildAdoptMe(tab)
-    elseif detected == "Brookhaven"       then buildBrookhaven(tab)
+    elseif detected == "Counter Blox"           then buildCounterBlox(tab)
+    elseif detected == "Strucid"                then buildStrucid(tab)
+    elseif detected == "Bad Business"           then buildBadBusiness(tab)
+    elseif detected == "Prison Life"            then buildPrisonLife(tab)
+    elseif detected == "Adopt Me"               then buildAdoptMe(tab)
+    elseif detected == "Brookhaven"             then buildBrookhaven(tab)
+    elseif detected == "Island Royale"          then buildIslandRoyale(tab)
+    elseif detected == "BIG Paintball"          then buildBigPaintball(tab)
+    elseif detected == "Mad Paintball 2"        then buildMadPaintball2(tab)
+    elseif detected == "Project Lazarus"        then buildProjectLazarus(tab)
+    elseif detected == "Power Simulator"        then buildPowerSim(tab)
+    elseif detected == "Lifting Simulator"      then buildLiftingSim(tab)
+    elseif detected == "Muscle Legend"          then buildMuscleLegend(tab)
+    elseif detected == "Ninja Legends"          then buildNinjaLegends(tab)
+    elseif detected == "One Piece Legendary"    then buildOnePieceLegendary(tab)
+    elseif detected == "One Piece Ultimate"     then buildOnePieceUltimate(tab)
+    elseif detected == "One Punch Man IJ"       then buildOnePunchManIJ(tab)
+    elseif detected == "JoJo Blox"              then buildJoJoBlox(tab)
+    elseif detected == "Stands Online"          then buildStandsOnline(tab)
+    elseif detected == "A Bizarre Day"          then buildABizarreDay(tab)
+    elseif detected == "R2DA"                   then buildR2DA(tab)
+    elseif detected == "Zombie Rush"            then buildZombieRush(tab)
+    elseif detected == "Zombie Strike"          then buildZombieStrike(tab)
+    elseif detected == "Vehicle Tycoon"         then buildVehicleTycoon(tab)
+    elseif detected == "Sound Space"            then buildSoundSpace(tab)
+    elseif detected == "Mayday"                 then buildMayday(tab)
+    elseif detected == "Squadron"               then buildSquadron(tab)
+    elseif detected == "Redwood Prison"         then buildRedwoodPrison(tab)
+    elseif detected == "Wild Revolvers"         then buildWildRevolvers(tab)
+    elseif detected == "No Scope Sniping"       then buildNoScopeSniping(tab)
+    elseif detected == "Bullet Hell"            then buildBulletHell(tab)
+    elseif detected == "Operation Scorpion"     then buildOperationScorpion(tab)
+    elseif detected == "Typical Colors 2"       then buildTypicalColors2(tab)
+    elseif detected == "Skywars"                then buildSkywars(tab)
+    elseif detected == "Infinity RPG 2"         then buildInfinityRpg2(tab)
+    elseif detected == "AceOfSpadez"            then buildAceOfSpadez(tab)
+    elseif detected == "Assassin"               then buildAssassinGame(tab)
+    elseif detected == "RB World 3"             then buildRBWorld3(tab)
+    elseif detected == "Color Craze"            then buildColorCraze(tab)
+    elseif detected == "Esper Online"           then buildEsperOnline(tab)
+    elseif detected == "Terminal Railways"      then buildTerminalRailways(tab)
+    elseif detected == "Rumble Quest"           then buildRumbleQuest(tab)
     end
 
     -- category-wide fallback (always adds, on top of bespoke)
