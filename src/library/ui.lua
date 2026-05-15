@@ -536,6 +536,221 @@ local function rowFrame(parent, height)
     return row
 end
 
+-- ============================================================
+-- GroupBox / TabBox (Linoria-style dense layout)
+-- ============================================================
+-- GroupBox is a Section variant that supports left/right column
+-- placement inside a Tab. Two GroupBoxes can sit side-by-side in 50/50
+-- columns. Existing AddSection still works (full-width row).
+-- TabBox is a sub-tab container that lives inside a Tab.
+
+function Tab:AddGroupBox(name, column)
+    -- column: "Left" | "Right" | nil (auto, alternates)
+    column = column or "Left"
+    -- Look up (or create) a row to hold left+right columns
+    local rowName = "_columnRow_" .. tostring(#self._page:GetChildren())
+    -- Find the most recent unbalanced row (one with only one column)
+    local existingRow
+    for _, child in ipairs(self._page:GetChildren()) do
+        if child:IsA("Frame") and child:GetAttribute("ROGBLOX_columnRow") then
+            local left  = child:FindFirstChild("LeftCol")
+            local right = child:FindFirstChild("RightCol")
+            if column == "Right" and right and not right:GetAttribute("Filled") then
+                existingRow = child
+                break
+            elseif column == "Left" and left and not left:GetAttribute("Filled") then
+                existingRow = child
+                break
+            end
+        end
+    end
+
+    local containerRow
+    if existingRow then
+        containerRow = existingRow
+    else
+        containerRow = new("Frame", {
+            Parent = self._page,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, -4, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+        })
+        containerRow:SetAttribute("ROGBLOX_columnRow", true)
+        local leftCol = new("Frame", {
+            Name = "LeftCol",
+            Parent = containerRow,
+            BackgroundTransparency = 1,
+            Position = UDim2.new(0, 0, 0, 0),
+            Size = UDim2.new(0.5, -4, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+        })
+        new("UIListLayout", {Parent = leftCol, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8)})
+        local rightCol = new("Frame", {
+            Name = "RightCol",
+            Parent = containerRow,
+            BackgroundTransparency = 1,
+            Position = UDim2.new(0.5, 4, 0, 0),
+            Size = UDim2.new(0.5, -4, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+        })
+        new("UIListLayout", {Parent = rightCol, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8)})
+    end
+
+    local col = containerRow:FindFirstChild(column == "Right" and "RightCol" or "LeftCol")
+    if col then col:SetAttribute("Filled", true) end
+
+    -- Build a GroupBox using Section construction inside the chosen column
+    local outer = new("Frame", {
+        Parent = col,
+        BackgroundColor3 = THEME.Panel,
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BorderSizePixel = 0,
+    })
+    corner(8, outer)
+    stroke(THEME.Stroke, 1, outer)
+
+    local header = new("Frame", {
+        Parent = outer,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 24),
+    })
+    local headerBtn = new("TextButton", {
+        Parent = header,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 1, 0),
+        Font = Enum.Font.GothamBold,
+        Text = "  " .. name,
+        TextColor3 = THEME.Text,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+    local body = new("Frame", {
+        Parent = outer,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        Position = UDim2.new(0, 0, 0, 24),
+    })
+    new("UIListLayout", {Parent = body, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 5)})
+    new("UIPadding", {
+        Parent = body,
+        PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 8),
+        PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10),
+    })
+
+    local collapsed = false
+    headerBtn.MouseButton1Click:Connect(function()
+        collapsed = not collapsed
+        body.Visible = not collapsed
+        headerBtn.Text = (collapsed and "  > " or "  ") .. name
+    end)
+
+    return setmetatable({
+        _frame = body,
+        _outer = outer,
+        _window = self._window,
+        _name = name,
+    }, Section)
+end
+
+function Tab:AddTabBox()
+    -- Returns a TabBox container with its own internal tab strip.
+    local container = new("Frame", {
+        Parent = self._page,
+        BackgroundColor3 = THEME.Panel,
+        Size = UDim2.new(1, -4, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BorderSizePixel = 0,
+    })
+    corner(8, container)
+    stroke(THEME.Stroke, 1, container)
+
+    local strip = new("Frame", {
+        Parent = container,
+        BackgroundColor3 = THEME.Panel2,
+        BorderSizePixel = 0,
+        Size = UDim2.new(1, 0, 0, 26),
+    })
+    corner(8, strip)
+    new("UIListLayout", {
+        Parent = strip,
+        FillDirection = Enum.FillDirection.Horizontal,
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Padding = UDim.new(0, 2),
+    })
+    new("UIPadding", {Parent = strip, PaddingLeft = UDim.new(0, 4), PaddingTop = UDim.new(0, 2)})
+
+    local pages = new("Frame", {
+        Parent = container,
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, 0, 0, 28),
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+    })
+
+    local subTabs = {}
+    local active
+
+    local function selectSub(t)
+        for _, st in ipairs(subTabs) do
+            st._page.Visible = (st == t)
+            st._btn.BackgroundColor3 = (st == t) and THEME.AccentDim or THEME.Element
+            st._btn.TextColor3       = (st == t) and THEME.Text or THEME.SubText
+        end
+        active = t
+    end
+
+    local box = {}
+    function box:AddTab(subName)
+        local btn = new("TextButton", {
+            Parent = strip,
+            BackgroundColor3 = THEME.Element,
+            AutoButtonColor = false,
+            Size = UDim2.new(0, 0, 1, -6),
+            AutomaticSize = Enum.AutomaticSize.X,
+            Font = Enum.Font.GothamMedium,
+            Text = "  " .. subName .. "  ",
+            TextColor3 = THEME.SubText,
+            TextSize = 11,
+            BorderSizePixel = 0,
+        })
+        corner(4, btn)
+
+        local page = new("Frame", {
+            Parent = pages,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Visible = false,
+        })
+        new("UIListLayout", {Parent = page, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 5)})
+        new("UIPadding", {
+            Parent = page,
+            PaddingTop    = UDim.new(0, 6),
+            PaddingBottom = UDim.new(0, 8),
+            PaddingLeft   = UDim.new(0, 10),
+            PaddingRight  = UDim.new(0, 10),
+        })
+
+        local sub = setmetatable({
+            _frame  = page,
+            _outer  = page,
+            _btn    = btn,
+            _page   = page,
+            _window = self._window,
+        }, Section)
+
+        btn.MouseButton1Click:Connect(function() selectSub(sub) end)
+        table.insert(subTabs, sub)
+        if #subTabs == 1 then selectSub(sub) end
+        return sub
+    end
+    -- expose to the outer Tab's window via the section metatable chain
+    box._window = self._window
+    return box
+end
+
 local function trackComponent(section, label, frame)
     table.insert(section._window._components, {Frame = frame, Label = label})
 end

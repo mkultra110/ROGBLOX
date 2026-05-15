@@ -550,6 +550,221 @@ local function rowFrame(parent, height)
     return row
 end
 
+-- ============================================================
+-- GroupBox / TabBox (Linoria-style dense layout)
+-- ============================================================
+-- GroupBox is a Section variant that supports left/right column
+-- placement inside a Tab. Two GroupBoxes can sit side-by-side in 50/50
+-- columns. Existing AddSection still works (full-width row).
+-- TabBox is a sub-tab container that lives inside a Tab.
+
+function Tab:AddGroupBox(name, column)
+    -- column: "Left" | "Right" | nil (auto, alternates)
+    column = column or "Left"
+    -- Look up (or create) a row to hold left+right columns
+    local rowName = "_columnRow_" .. tostring(#self._page:GetChildren())
+    -- Find the most recent unbalanced row (one with only one column)
+    local existingRow
+    for _, child in ipairs(self._page:GetChildren()) do
+        if child:IsA("Frame") and child:GetAttribute("ROGBLOX_columnRow") then
+            local left  = child:FindFirstChild("LeftCol")
+            local right = child:FindFirstChild("RightCol")
+            if column == "Right" and right and not right:GetAttribute("Filled") then
+                existingRow = child
+                break
+            elseif column == "Left" and left and not left:GetAttribute("Filled") then
+                existingRow = child
+                break
+            end
+        end
+    end
+
+    local containerRow
+    if existingRow then
+        containerRow = existingRow
+    else
+        containerRow = new("Frame", {
+            Parent = self._page,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, -4, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+        })
+        containerRow:SetAttribute("ROGBLOX_columnRow", true)
+        local leftCol = new("Frame", {
+            Name = "LeftCol",
+            Parent = containerRow,
+            BackgroundTransparency = 1,
+            Position = UDim2.new(0, 0, 0, 0),
+            Size = UDim2.new(0.5, -4, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+        })
+        new("UIListLayout", {Parent = leftCol, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8)})
+        local rightCol = new("Frame", {
+            Name = "RightCol",
+            Parent = containerRow,
+            BackgroundTransparency = 1,
+            Position = UDim2.new(0.5, 4, 0, 0),
+            Size = UDim2.new(0.5, -4, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+        })
+        new("UIListLayout", {Parent = rightCol, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8)})
+    end
+
+    local col = containerRow:FindFirstChild(column == "Right" and "RightCol" or "LeftCol")
+    if col then col:SetAttribute("Filled", true) end
+
+    -- Build a GroupBox using Section construction inside the chosen column
+    local outer = new("Frame", {
+        Parent = col,
+        BackgroundColor3 = THEME.Panel,
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BorderSizePixel = 0,
+    })
+    corner(8, outer)
+    stroke(THEME.Stroke, 1, outer)
+
+    local header = new("Frame", {
+        Parent = outer,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 24),
+    })
+    local headerBtn = new("TextButton", {
+        Parent = header,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 1, 0),
+        Font = Enum.Font.GothamBold,
+        Text = "  " .. name,
+        TextColor3 = THEME.Text,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+    local body = new("Frame", {
+        Parent = outer,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        Position = UDim2.new(0, 0, 0, 24),
+    })
+    new("UIListLayout", {Parent = body, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 5)})
+    new("UIPadding", {
+        Parent = body,
+        PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 8),
+        PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10),
+    })
+
+    local collapsed = false
+    headerBtn.MouseButton1Click:Connect(function()
+        collapsed = not collapsed
+        body.Visible = not collapsed
+        headerBtn.Text = (collapsed and "  > " or "  ") .. name
+    end)
+
+    return setmetatable({
+        _frame = body,
+        _outer = outer,
+        _window = self._window,
+        _name = name,
+    }, Section)
+end
+
+function Tab:AddTabBox()
+    -- Returns a TabBox container with its own internal tab strip.
+    local container = new("Frame", {
+        Parent = self._page,
+        BackgroundColor3 = THEME.Panel,
+        Size = UDim2.new(1, -4, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BorderSizePixel = 0,
+    })
+    corner(8, container)
+    stroke(THEME.Stroke, 1, container)
+
+    local strip = new("Frame", {
+        Parent = container,
+        BackgroundColor3 = THEME.Panel2,
+        BorderSizePixel = 0,
+        Size = UDim2.new(1, 0, 0, 26),
+    })
+    corner(8, strip)
+    new("UIListLayout", {
+        Parent = strip,
+        FillDirection = Enum.FillDirection.Horizontal,
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Padding = UDim.new(0, 2),
+    })
+    new("UIPadding", {Parent = strip, PaddingLeft = UDim.new(0, 4), PaddingTop = UDim.new(0, 2)})
+
+    local pages = new("Frame", {
+        Parent = container,
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, 0, 0, 28),
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+    })
+
+    local subTabs = {}
+    local active
+
+    local function selectSub(t)
+        for _, st in ipairs(subTabs) do
+            st._page.Visible = (st == t)
+            st._btn.BackgroundColor3 = (st == t) and THEME.AccentDim or THEME.Element
+            st._btn.TextColor3       = (st == t) and THEME.Text or THEME.SubText
+        end
+        active = t
+    end
+
+    local box = {}
+    function box:AddTab(subName)
+        local btn = new("TextButton", {
+            Parent = strip,
+            BackgroundColor3 = THEME.Element,
+            AutoButtonColor = false,
+            Size = UDim2.new(0, 0, 1, -6),
+            AutomaticSize = Enum.AutomaticSize.X,
+            Font = Enum.Font.GothamMedium,
+            Text = "  " .. subName .. "  ",
+            TextColor3 = THEME.SubText,
+            TextSize = 11,
+            BorderSizePixel = 0,
+        })
+        corner(4, btn)
+
+        local page = new("Frame", {
+            Parent = pages,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            Visible = false,
+        })
+        new("UIListLayout", {Parent = page, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 5)})
+        new("UIPadding", {
+            Parent = page,
+            PaddingTop    = UDim.new(0, 6),
+            PaddingBottom = UDim.new(0, 8),
+            PaddingLeft   = UDim.new(0, 10),
+            PaddingRight  = UDim.new(0, 10),
+        })
+
+        local sub = setmetatable({
+            _frame  = page,
+            _outer  = page,
+            _btn    = btn,
+            _page   = page,
+            _window = self._window,
+        }, Section)
+
+        btn.MouseButton1Click:Connect(function() selectSub(sub) end)
+        table.insert(subTabs, sub)
+        if #subTabs == 1 then selectSub(sub) end
+        return sub
+    end
+    -- expose to the outer Tab's window via the section metatable chain
+    box._window = self._window
+    return box
+end
+
 local function trackComponent(section, label, frame)
     table.insert(section._window._components, {Frame = frame, Label = label})
 end
@@ -1639,6 +1854,76 @@ M.Themes = {
         Good         = Color3.fromRGB( 60, 180, 110),
         Warn         = Color3.fromRGB(220, 160,  40),
         Bad          = Color3.fromRGB(220,  80,  80),
+    },
+    Cyber = {
+        Background   = Color3.fromRGB( 6,  10,  22),
+        Panel        = Color3.fromRGB(12,  18,  36),
+        Panel2       = Color3.fromRGB(18,  26,  52),
+        Element      = Color3.fromRGB(26,  36,  68),
+        ElementHover = Color3.fromRGB(36,  48,  88),
+        Accent       = Color3.fromRGB(255,  60, 180),
+        AccentDim    = Color3.fromRGB(180,  30, 130),
+        AccentSoft   = Color3.fromRGB(255, 130, 210),
+        Text         = Color3.fromRGB(220, 240, 255),
+        SubText      = Color3.fromRGB(140, 170, 200),
+        DimText      = Color3.fromRGB( 90, 120, 150),
+        Stroke       = Color3.fromRGB( 50,  72, 110),
+        Good         = Color3.fromRGB( 60, 230, 200),
+        Warn         = Color3.fromRGB(255, 230,  60),
+        Bad          = Color3.fromRGB(255,  70, 120),
+    },
+    Sunset = {
+        Background   = Color3.fromRGB(22,  12,   8),
+        Panel        = Color3.fromRGB(32,  18,  12),
+        Panel2       = Color3.fromRGB(42,  24,  16),
+        Element      = Color3.fromRGB(54,  30,  20),
+        ElementHover = Color3.fromRGB(68,  38,  24),
+        Accent       = Color3.fromRGB(255, 120,  60),
+        AccentDim    = Color3.fromRGB(200,  80,  30),
+        AccentSoft   = Color3.fromRGB(255, 180, 130),
+        Text         = Color3.fromRGB(250, 235, 220),
+        SubText      = Color3.fromRGB(190, 160, 140),
+        DimText      = Color3.fromRGB(130, 105,  85),
+        Stroke       = Color3.fromRGB( 85,  50,  35),
+        Good         = Color3.fromRGB(190, 220, 130),
+        Warn         = Color3.fromRGB(255, 210,  80),
+        Bad          = Color3.fromRGB(255,  90,  90),
+    },
+    Forest = {
+        Background   = Color3.fromRGB( 8,  20,  14),
+        Panel        = Color3.fromRGB(14,  28,  20),
+        Panel2       = Color3.fromRGB(20,  36,  28),
+        Element      = Color3.fromRGB(28,  46,  34),
+        ElementHover = Color3.fromRGB(38,  58,  44),
+        Accent       = Color3.fromRGB(120, 200, 100),
+        AccentDim    = Color3.fromRGB( 80, 150,  60),
+        AccentSoft   = Color3.fromRGB(180, 230, 150),
+        Text         = Color3.fromRGB(230, 245, 230),
+        SubText      = Color3.fromRGB(150, 175, 150),
+        DimText      = Color3.fromRGB(105, 130, 105),
+        Stroke       = Color3.fromRGB( 45,  68,  50),
+        Good         = Color3.fromRGB(120, 220, 140),
+        Warn         = Color3.fromRGB(255, 200,  80),
+        Bad          = Color3.fromRGB(255, 110, 110),
+    },
+    Mono = {
+        -- Pure monochrome - tasteful, neutral. The single accent is
+        -- desaturated so it works with any user color preference.
+        Background   = Color3.fromRGB(14,  14,  16),
+        Panel        = Color3.fromRGB(22,  22,  25),
+        Panel2       = Color3.fromRGB(30,  30,  34),
+        Element      = Color3.fromRGB(40,  40,  44),
+        ElementHover = Color3.fromRGB(52,  52,  58),
+        Accent       = Color3.fromRGB(220, 220, 230),
+        AccentDim    = Color3.fromRGB(160, 160, 170),
+        AccentSoft   = Color3.fromRGB(245, 245, 250),
+        Text         = Color3.fromRGB(245, 245, 250),
+        SubText      = Color3.fromRGB(170, 170, 180),
+        DimText      = Color3.fromRGB(110, 110, 120),
+        Stroke       = Color3.fromRGB( 60,  60,  68),
+        Good         = Color3.fromRGB(200, 200, 210),
+        Warn         = Color3.fromRGB(230, 230, 200),
+        Bad          = Color3.fromRGB(230, 180, 180),
     },
 }
 
