@@ -1,4 +1,4 @@
-# ROGBLOX loader — single-button WPF UI.
+# ROGBLOX loader - single-button WPF UI.
 # Click "Load" and it does everything it can:
 #   - If an executor is already installed: drop ROGBLOX in its autoexec
 #     folder and launch Roblox. Done.
@@ -18,7 +18,7 @@ $ExecutorSearch = 'https://www.google.com/search?q=Solara+roblox+executor+downlo
 
 # bundle.ps1 replaces the empty string below with the Base64-encoded
 # bundled rogblox.lua. When non-empty, the loader writes the decoded
-# Lua directly to autoexec — fully offline, no GitHub fetch needed.
+# Lua directly to autoexec - fully offline, no GitHub fetch needed.
 $EmbeddedScriptB64 = ''
 
 function Get-AutoexecPayload {
@@ -252,7 +252,7 @@ $BtnGo.Add_Click({
         Start-Sleep -Milliseconds 400
         $ok = Start-Roblox
         if ($ok) {
-            Set-Status ("Done. Roblox launching. Attach your executor inside the game.`nFrom now on: just open Roblox — the cheat loads itself.") $Good
+            Set-Status ("Done. Roblox launching. Attach your executor inside the game.`nFrom now on: just open Roblox - the cheat loads itself.") $Good
         } else {
             Set-Status "Cheat installed. Open Roblox yourself (couldn't launch automatically)." $Warn
         }
@@ -261,12 +261,12 @@ $BtnGo.Add_Click({
     }
 })
 
-# Initial state — one-shot check just to update the status text
+# Initial state - one-shot check just to update the status text
 $initial = Find-AutoexecFolders
 if ($initial.Count -gt 0) {
     Set-Status "Executor detected. Click Load." $Good
 } else {
-    Set-Status "Click Load — I'll set everything up." $Sub
+    Set-Status "Click Load - I'll set everything up." $Sub
 }
 
 [void]$window.ShowDialog()

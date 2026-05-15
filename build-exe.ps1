@@ -3,7 +3,7 @@
 #   1. Bundle every Lua module into dist/rogblox.lua (bundle.ps1)
 #   2. Inject the bundle into launch-bundled.ps1 (also bundle.ps1)
 #   3. Compile launch-bundled.ps1 -> ROGBLOX.exe via PS2EXE
-# Run once. Send the resulting .exe to anyone — no other files needed.
+# Run once. Send the resulting .exe to anyone - no other files needed.
 
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -18,7 +18,7 @@ Write-Host ''
 
 # Step 1: bundle
 if (-not (Test-Path $bundleScript)) {
-    Write-Host '[!] bundle.ps1 missing — repo is incomplete.' -ForegroundColor Red
+    Write-Host '[!] bundle.ps1 missing - repo is incomplete.' -ForegroundColor Red
     Read-Host 'Press Enter to close'; exit 1
 }
 & $bundleScript
@@ -66,7 +66,7 @@ if (Test-Path $outExe) {
     $size = [Math]::Round((Get-Item $outExe).Length / 1KB, 1)
     Write-Host ''
     Write-Host ("[+] Built ROGBLOX.exe  ($size KB)") -ForegroundColor Green
-    Write-Host '    Self-contained — send it to friends. They just run it.' -ForegroundColor Green
+    Write-Host '    Self-contained - send it to friends. They just run it.' -ForegroundColor Green
     # tidy up the transient bundled .ps1 (the .exe is the artifact)
     Remove-Item $bundledPs1 -ErrorAction SilentlyContinue
 } else {

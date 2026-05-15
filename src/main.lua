@@ -26,20 +26,23 @@ local PlayersUtil = fetch("src/utils/players.lua")
 local Drawing     = fetch("src/utils/drawing.lua")
 
 -- feature modules
-local Aimbot   = fetch("src/modules/aimbot.lua")
-local ESP      = fetch("src/modules/esp.lua")
-local Combat   = fetch("src/modules/combat_extras.lua")
-local Movement = fetch("src/modules/movement.lua")
-local Teleport = fetch("src/modules/teleport.lua")
-local HUD      = fetch("src/modules/hud.lua")
-local World    = fetch("src/modules/world.lua")
-local Farm     = fetch("src/modules/autofarm.lua")
-local Misc     = fetch("src/modules/misc.lua")
+local Aimbot     = fetch("src/modules/aimbot.lua")
+local ESP        = fetch("src/modules/esp.lua")
+local Combat     = fetch("src/modules/combat_extras.lua")
+local Movement   = fetch("src/modules/movement.lua")
+local Teleport   = fetch("src/modules/teleport.lua")
+local HUD        = fetch("src/modules/hud.lua")
+local World      = fetch("src/modules/world.lua")
+local Farm       = fetch("src/modules/autofarm.lua")
+local Games      = fetch("src/modules/games.lua")
+local PlayerList = fetch("src/modules/playerlist.lua")
+local Console    = fetch("src/modules/console.lua")
+local Misc       = fetch("src/modules/misc.lua")
 
 local Window = UI:CreateWindow({
     Title    = "ROGBLOX",
-    SubTitle = "v0.3.0  pro",
-    Size     = Vector2.new(680, 460),
+    SubTitle = "v0.5.0  HQ",
+    Size     = Vector2.new(720, 500),
     Toggle   = Enum.KeyCode.RightControl,
 })
 
@@ -54,15 +57,18 @@ local ctx = {
 }
 
 -- Aimbot first so HUD can read its LockedTarget through ctx.
-Aimbot.Build(  Window:AddTab("Aimbot"),    ctx)
-HUD.Build(     Window:AddTab("HUD"),       ctx)
-ESP.Build(     Window:AddTab("Visuals"),   ctx)
-Combat.Build(  Window:AddTab("Combat+"),   ctx)
-Movement.Build(Window:AddTab("Movement"),  ctx)
-Teleport.Build(Window:AddTab("Teleport"),  ctx)
-World.Build(   Window:AddTab("World"),     ctx)
-Farm.Build(    Window:AddTab("Auto"),      ctx)
-Misc.Build(    Window:AddTab("Misc"),      ctx)
+Aimbot.Build(    Window:AddTab("Aimbot"),     ctx)
+HUD.Build(       Window:AddTab("HUD"),        ctx)
+ESP.Build(       Window:AddTab("Visuals"),    ctx)
+Combat.Build(    Window:AddTab("Combat+"),    ctx)
+Movement.Build(  Window:AddTab("Movement"),   ctx)
+Teleport.Build(  Window:AddTab("Teleport"),   ctx)
+World.Build(     Window:AddTab("World"),      ctx)
+Farm.Build(      Window:AddTab("Auto"),       ctx)
+Games.Build(     Window:AddTab("Games"),      ctx)
+PlayerList.Build(Window:AddTab("Players"),    ctx)
+Console.Build(   Window:AddTab("Console"),    ctx)
+Misc.Build(      Window:AddTab("Misc"),       ctx)
 
 local SettingsTab = Window:AddTab("Settings")
 local cfgSection = SettingsTab:AddSection("Config")
@@ -90,23 +96,26 @@ infoSection:AddLabel("JobId: " .. tostring(game.JobId))
 infoSection:AddLabel("Press RightCtrl to toggle UI")
 
 _G.ROGBLOX = {
-    Version = "0.3.0",
+    Version = "0.5.0",
     UI      = UI,
     Window  = Window,
     Notify  = Notify,
     Modules = {
-        Aimbot   = Aimbot,
-        ESP      = ESP,
-        Combat   = Combat,
-        Movement = Movement,
-        Teleport = Teleport,
-        HUD      = HUD,
-        World    = World,
-        Farm     = Farm,
-        Misc     = Misc,
+        Aimbot     = Aimbot,
+        ESP        = ESP,
+        Combat     = Combat,
+        Movement   = Movement,
+        Teleport   = Teleport,
+        HUD        = HUD,
+        World      = World,
+        Farm       = Farm,
+        Games      = Games,
+        PlayerList = PlayerList,
+        Console    = Console,
+        Misc       = Misc,
     },
     Unload = function()
-        for _, mod in pairs({Aimbot, ESP, Combat, Movement, Teleport, HUD, World, Farm, Misc}) do
+        for _, mod in ipairs({Aimbot, ESP, Combat, Movement, Teleport, HUD, World, Farm, Games, PlayerList, Console, Misc}) do
             if mod.Unload then pcall(mod.Unload) end
         end
         Window:Destroy()

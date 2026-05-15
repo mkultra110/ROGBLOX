@@ -31,6 +31,9 @@ MODULES = [
     "src/modules/hud.lua",
     "src/modules/world.lua",
     "src/modules/autofarm.lua",
+    "src/modules/games.lua",
+    "src/modules/playerlist.lua",
+    "src/modules/console.lua",
     "src/modules/misc.lua",
 ]
 MAIN = "src/main.lua"

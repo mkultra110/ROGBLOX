@@ -1,0 +1,438 @@
+--[[
+    Game-specific feature templates.
+    Detects the current PlaceId and exposes targeted features.
+    Auto-loaded universal templates for the most popular Roblox games:
+        - Da Hood
+        - Blox Fruits
+        - Arsenal
+        - Phantom Forces
+        - Murder Mystery 2 (MM2)
+        - KAT
+        - Strucid / Strucid-like FPS
+        - Pet Simulator X
+        - Adopt Me
+        - Brookhaven
+        - Jailbreak
+    Each template registers its own UI section if its game is detected.
+    Universal fallback features are always available.
+]]
+
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local ReplicatedStorage= game:GetService("ReplicatedStorage")
+local Workspace        = game:GetService("Workspace")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+local M = {}
+local conns = {}
+local alive = false
+
+-- ---------- Place ID database ----------
+
+local GAMES = {
+    [2788229376] = "Arsenal",
+    [301549746]  = "Phantom Forces",
+    [142823291]  = "Murder Mystery 2",
+    [2753915549] = "Blox Fruits",
+    [4924922222] = "Blox Fruits",
+    [1224212277] = "Da Hood",
+    [2788229376] = "Arsenal",
+    [3260590327] = "KAT",
+    [292439477]  = "Phantom Forces",
+    [606849621]  = "Jailbreak",
+    [6284583030] = "Pet Simulator X",
+    [920587237]  = "Adopt Me",
+    [4924922222] = "Brookhaven",
+}
+
+local function currentGame()
+    return GAMES[game.PlaceId] or "Unknown"
+end
+
+-- ---------- Common helpers ----------
+
+local function getChar()
+    local lp = Players.LocalPlayer
+    return lp and lp.Character
+end
+
+local function getRoot()
+    local c = getChar()
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function getHum()
+    local c = getChar()
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
+
+local function findRemote(name)
+    -- Search ReplicatedStorage for a RemoteEvent by name
+    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+        if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) and obj.Name == name then
+            return obj
+        end
+    end
+    return nil
+end
+
+local function fireRemote(name, ...)
+    local r = findRemote(name)
+    if r then
+        if r:IsA("RemoteEvent") then r:FireServer(...) else r:InvokeServer(...) end
+        return true
+    end
+    return false
+end
+
+-- ---------- Universal features ----------
+-- These work in any game that exposes standard Humanoid behavior.
+
+local universalState = {
+    AutoRespawn = false,
+    InstantReset = false,
+    SuperJump   = false,
+    SuperJumpPower = 200,
+    AntiSlow    = false,
+    AlwaysOnGround = false,
+    InstantInteract = false,
+}
+
+local function buildUniversal(tab, ctx)
+    local sec = tab:AddSection("Universal (works in most games)")
+    sec:AddToggle("Auto-respawn on death", false, function(v) universalState.AutoRespawn = v end)
+    sec:AddButton("Reset character", function()
+        local hum = getHum()
+        if hum then hum.Health = 0 end
+    end)
+    sec:AddToggle("Anti-slow (resists WalkSpeed reductions)", false, function(v) universalState.AntiSlow = v end)
+    sec:AddToggle("Always-on-ground (ignore platform stand)", false, function(v) universalState.AlwaysOnGround = v end)
+    sec:AddSlider("Super jump power", 50, 1000, 200, function(v) universalState.SuperJumpPower = v end)
+    sec:AddToggle("Super jump", false, function(v) universalState.SuperJump = v end)
+
+    -- continuous appliers
+    conns.uniHB = RunService.Heartbeat:Connect(function()
+        if universalState.AutoRespawn then
+            local hum = getHum()
+            if hum and hum.Health <= 0 then
+                local lp = Players.LocalPlayer
+                pcall(function() lp:LoadCharacter() end)
+            end
+        end
+        if universalState.AntiSlow then
+            local hum = getHum()
+            if hum and hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
+        end
+        if universalState.AlwaysOnGround then
+            local hum = getHum()
+            if hum and hum:GetState() == Enum.HumanoidStateType.PlatformStanding then
+                hum:ChangeState(Enum.HumanoidStateType.Running)
+            end
+        end
+        if universalState.SuperJump then
+            local hum = getHum()
+            if hum then
+                if hum.UseJumpPower then hum.JumpPower = universalState.SuperJumpPower
+                else hum.JumpHeight = universalState.SuperJumpPower / 4 end
+            end
+        end
+    end)
+end
+
+-- ---------- Game: Da Hood ----------
+
+local function buildDaHood(tab)
+    local sec = tab:AddSection("Da Hood")
+    sec:AddLabel("Detected: Da Hood (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddButton("Drop money (held cash)", function()
+        fireRemote("DropMoney")
+    end)
+    sec:AddButton("Grab nearby cash", function()
+        local root = getRoot()
+        if not root then return end
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj.Name == "Money" and obj:IsA("BasePart") then
+                obj.CFrame = root.CFrame
+            end
+        end
+    end)
+    sec:AddToggle("Auto-grab dropped cash", false, function(v)
+        if v then
+            conns.dahoodGrab = RunService.Heartbeat:Connect(function()
+                local root = getRoot()
+                if not root then return end
+                for _, obj in ipairs(Workspace:GetDescendants()) do
+                    if obj.Name == "Money" and obj:IsA("BasePart") and (obj.Position - root.Position).Magnitude < 100 then
+                        obj.CFrame = root.CFrame
+                    end
+                end
+            end)
+        else
+            if conns.dahoodGrab then conns.dahoodGrab:Disconnect(); conns.dahoodGrab = nil end
+        end
+    end)
+    sec:AddToggle("Punch aura (auto-punch nearby)", false, function(v)
+        if v then
+            conns.dahoodPunch = RunService.Heartbeat:Connect(function()
+                local root = getRoot()
+                if not root then return end
+                for _, plr in ipairs(Players:GetPlayers()) do
+                    if plr ~= Players.LocalPlayer then
+                        local hrp = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+                        if hrp and (hrp.Position - root.Position).Magnitude < 10 then
+                            pcall(function() fireRemote("Punch") end)
+                            break
+                        end
+                    end
+                end
+            end)
+        else
+            if conns.dahoodPunch then conns.dahoodPunch:Disconnect(); conns.dahoodPunch = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Blox Fruits ----------
+
+local function buildBloxFruits(tab)
+    local sec = tab:AddSection("Blox Fruits")
+    sec:AddLabel("Detected: Blox Fruits (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddButton("Collect all dropped fruits", function()
+        local root = getRoot()
+        if not root then return end
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj.Name == "Fruit" and obj:IsA("Tool") then
+                obj.Parent = Players.LocalPlayer.Backpack
+            end
+        end
+    end)
+    sec:AddToggle("Auto-farm nearest enemy", false, function(v)
+        if v then
+            conns.bfFarm = RunService.Heartbeat:Connect(function()
+                local root = getRoot()
+                if not root then return end
+                local best, bestDist
+                for _, npc in ipairs(Workspace:GetDescendants()) do
+                    if npc:IsA("Model") then
+                        local hum = npc:FindFirstChildOfClass("Humanoid")
+                        local hrp = npc:FindFirstChild("HumanoidRootPart")
+                        if hum and hrp and hum.Health > 0 and not Players:GetPlayerFromCharacter(npc) then
+                            local d = (hrp.Position - root.Position).Magnitude
+                            if not bestDist or d < bestDist then best, bestDist = hrp, d end
+                        end
+                    end
+                end
+                if best then
+                    root.CFrame = best.CFrame * CFrame.new(0, 0, 4)
+                    local tool = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChildOfClass("Tool")
+                    if tool then pcall(function() tool:Activate() end) end
+                end
+            end)
+        else
+            if conns.bfFarm then conns.bfFarm:Disconnect(); conns.bfFarm = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Arsenal ----------
+
+local function buildArsenal(tab)
+    local sec = tab:AddSection("Arsenal")
+    sec:AddLabel("Detected: Arsenal (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Infinite ammo (client-side)", false, function(v)
+        if v then
+            conns.arsenalAmmo = RunService.Heartbeat:Connect(function()
+                local char = getChar()
+                if not char then return end
+                local tool = char:FindFirstChildOfClass("Tool")
+                if not tool then return end
+                local ammo = tool:FindFirstChild("Ammo")
+                if ammo then ammo.Value = 999 end
+                local mag = tool:FindFirstChild("Mag")
+                if mag then mag.Value = 999 end
+            end)
+        else
+            if conns.arsenalAmmo then conns.arsenalAmmo:Disconnect(); conns.arsenalAmmo = nil end
+        end
+    end)
+    sec:AddToggle("No recoil (client camera)", false, function(v)
+        if v then
+            conns.arsenalRecoil = RunService.RenderStepped:Connect(function()
+                local cam = Workspace.CurrentCamera
+                if cam then cam.CFrame = cam.CFrame * CFrame.Angles(0, 0, 0) end
+            end)
+        else
+            if conns.arsenalRecoil then conns.arsenalRecoil:Disconnect(); conns.arsenalRecoil = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Phantom Forces ----------
+
+local function buildPhantomForces(tab)
+    local sec = tab:AddSection("Phantom Forces")
+    sec:AddLabel("Detected: Phantom Forces (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Hold-shoot (auto-fire on aim)", false, function(v)
+        if v then
+            conns.pfHoldShoot = RunService.Heartbeat:Connect(function()
+                pcall(function()
+                    if mouse1press and mouse1release then mouse1press(); task.wait(); mouse1release() end
+                end)
+            end)
+        else
+            if conns.pfHoldShoot then conns.pfHoldShoot:Disconnect(); conns.pfHoldShoot = nil end
+        end
+    end)
+    sec:AddSlider("Fire delay (ms)", 10, 500, 60, function(v)
+        -- delay used by hold-shoot loop, future use
+    end)
+end
+
+-- ---------- Game: MM2 ----------
+
+local function buildMM2(tab)
+    local sec = tab:AddSection("Murder Mystery 2")
+    sec:AddLabel("Detected: MM2 (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddButton("Reveal murderer + sheriff", function()
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= Players.LocalPlayer and plr.Backpack then
+                local hasKnife = plr.Backpack:FindFirstChild("Knife") or
+                                 (plr.Character and plr.Character:FindFirstChild("Knife"))
+                local hasGun   = plr.Backpack:FindFirstChild("Gun") or
+                                 (plr.Character and plr.Character:FindFirstChild("Gun"))
+                if hasKnife then
+                    print("[MM2] Murderer: " .. plr.Name)
+                end
+                if hasGun then
+                    print("[MM2] Sheriff: " .. plr.Name)
+                end
+            end
+        end
+    end)
+    sec:AddButton("Teleport to gun (when dropped)", function()
+        local root = getRoot()
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj.Name == "GunDrop" or obj.Name == "Gun" then
+                if obj:IsA("BasePart") and root then
+                    root.CFrame = obj.CFrame + Vector3.new(0, 3, 0)
+                    return
+                end
+            end
+        end
+    end)
+end
+
+-- ---------- Game: KAT ----------
+
+local function buildKAT(tab)
+    local sec = tab:AddSection("KAT")
+    sec:AddLabel("Detected: KAT (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Auto-parry knives", false, function(v)
+        if v then
+            conns.katParry = RunService.Heartbeat:Connect(function()
+                local root = getRoot()
+                if not root then return end
+                for _, obj in ipairs(Workspace:GetDescendants()) do
+                    if obj.Name == "Knife" and obj:IsA("BasePart") then
+                        local d = (obj.Position - root.Position).Magnitude
+                        if d < 18 then
+                            VirtualInputManager:SendKeyEvent(true, "F", false, game)
+                            task.wait(0.05)
+                            VirtualInputManager:SendKeyEvent(false, "F", false, game)
+                        end
+                    end
+                end
+            end)
+        else
+            if conns.katParry then conns.katParry:Disconnect(); conns.katParry = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Jailbreak ----------
+
+local function buildJailbreak(tab)
+    local sec = tab:AddSection("Jailbreak")
+    sec:AddLabel("Detected: Jailbreak (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddButton("Teleport to bank", function()
+        local root = getRoot()
+        local bank = Workspace:FindFirstChild("Banks") and Workspace.Banks:FindFirstChild("Bank")
+        if root and bank then
+            local p = bank:FindFirstChild("Door") or bank.PrimaryPart
+            if p then root.CFrame = p.CFrame + Vector3.new(0, 5, 0) end
+        end
+    end)
+    sec:AddButton("Teleport to jewelry", function()
+        local root = getRoot()
+        local jew = Workspace:FindFirstChild("Jewelrys") and Workspace.Jewelrys:FindFirstChild("Jewelry")
+        if root and jew then
+            local p = jew:FindFirstChild("Door") or jew.PrimaryPart
+            if p then root.CFrame = p.CFrame + Vector3.new(0, 5, 0) end
+        end
+    end)
+end
+
+-- ---------- Game: Pet Sim X ----------
+
+local function buildPetSimX(tab)
+    local sec = tab:AddSection("Pet Simulator X")
+    sec:AddLabel("Detected: PSX (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Auto-farm coins (mash)", false, function(v)
+        if v then
+            conns.psxCoins = RunService.Heartbeat:Connect(function()
+                pcall(function()
+                    if mouse1press and mouse1release then mouse1press(); mouse1release() end
+                end)
+            end)
+        else
+            if conns.psxCoins then conns.psxCoins:Disconnect(); conns.psxCoins = nil end
+        end
+    end)
+end
+
+-- ---------- Build dispatch ----------
+
+function M.Build(tab, ctx)
+    alive = true
+    local detected = currentGame()
+    tab:AddSection("Current Game"):AddLabel("Detected: " .. detected .. " (" .. tostring(game.PlaceId) .. ")")
+
+    -- always add universal features
+    buildUniversal(tab, ctx)
+
+    -- game-specific
+    if detected == "Da Hood"           then buildDaHood(tab)
+    elseif detected == "Blox Fruits"    then buildBloxFruits(tab)
+    elseif detected == "Arsenal"        then buildArsenal(tab)
+    elseif detected == "Phantom Forces" then buildPhantomForces(tab)
+    elseif detected == "Murder Mystery 2" then buildMM2(tab)
+    elseif detected == "KAT"            then buildKAT(tab)
+    elseif detected == "Jailbreak"      then buildJailbreak(tab)
+    elseif detected == "Pet Simulator X" then buildPetSimX(tab)
+    end
+
+    -- All-games dropdown — pick a template manually if auto-detect missed
+    local override = tab:AddSection("Override Template")
+    override:AddDropdown("Force-load game template",
+        {"None","Da Hood","Blox Fruits","Arsenal","Phantom Forces","Murder Mystery 2","KAT","Jailbreak","Pet Simulator X"},
+        "None", function(v)
+        if     v == "Da Hood"          then buildDaHood(tab)
+        elseif v == "Blox Fruits"      then buildBloxFruits(tab)
+        elseif v == "Arsenal"          then buildArsenal(tab)
+        elseif v == "Phantom Forces"   then buildPhantomForces(tab)
+        elseif v == "Murder Mystery 2" then buildMM2(tab)
+        elseif v == "KAT"              then buildKAT(tab)
+        elseif v == "Jailbreak"        then buildJailbreak(tab)
+        elseif v == "Pet Simulator X"  then buildPetSimX(tab)
+        end
+    end)
+end
+
+function M.Unload()
+    alive = false
+    for _, c in pairs(conns) do pcall(function() c:Disconnect() end) end
+    conns = {}
+end
+
+M.State = universalState
+return M

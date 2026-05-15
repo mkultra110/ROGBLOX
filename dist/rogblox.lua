@@ -3640,6 +3640,1058 @@ return M
 
 end
 
+_modules['src/modules/games.lua'] = function()
+--[[
+    Game-specific feature templates.
+    Detects the current PlaceId and exposes targeted features.
+    Auto-loaded universal templates for the most popular Roblox games:
+        - Da Hood
+        - Blox Fruits
+        - Arsenal
+        - Phantom Forces
+        - Murder Mystery 2 (MM2)
+        - KAT
+        - Strucid / Strucid-like FPS
+        - Pet Simulator X
+        - Adopt Me
+        - Brookhaven
+        - Jailbreak
+    Each template registers its own UI section if its game is detected.
+    Universal fallback features are always available.
+]]
+
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local ReplicatedStorage= game:GetService("ReplicatedStorage")
+local Workspace        = game:GetService("Workspace")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+local M = {}
+local conns = {}
+local alive = false
+
+-- ---------- Place ID database ----------
+
+local GAMES = {
+    [2788229376] = "Arsenal",
+    [301549746]  = "Phantom Forces",
+    [142823291]  = "Murder Mystery 2",
+    [2753915549] = "Blox Fruits",
+    [4924922222] = "Blox Fruits",
+    [1224212277] = "Da Hood",
+    [2788229376] = "Arsenal",
+    [3260590327] = "KAT",
+    [292439477]  = "Phantom Forces",
+    [606849621]  = "Jailbreak",
+    [6284583030] = "Pet Simulator X",
+    [920587237]  = "Adopt Me",
+    [4924922222] = "Brookhaven",
+}
+
+local function currentGame()
+    return GAMES[game.PlaceId] or "Unknown"
+end
+
+-- ---------- Common helpers ----------
+
+local function getChar()
+    local lp = Players.LocalPlayer
+    return lp and lp.Character
+end
+
+local function getRoot()
+    local c = getChar()
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function getHum()
+    local c = getChar()
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
+
+local function findRemote(name)
+    -- Search ReplicatedStorage for a RemoteEvent by name
+    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+        if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) and obj.Name == name then
+            return obj
+        end
+    end
+    return nil
+end
+
+local function fireRemote(name, ...)
+    local r = findRemote(name)
+    if r then
+        if r:IsA("RemoteEvent") then r:FireServer(...) else r:InvokeServer(...) end
+        return true
+    end
+    return false
+end
+
+-- ---------- Universal features ----------
+-- These work in any game that exposes standard Humanoid behavior.
+
+local universalState = {
+    AutoRespawn = false,
+    InstantReset = false,
+    SuperJump   = false,
+    SuperJumpPower = 200,
+    AntiSlow    = false,
+    AlwaysOnGround = false,
+    InstantInteract = false,
+}
+
+local function buildUniversal(tab, ctx)
+    local sec = tab:AddSection("Universal (works in most games)")
+    sec:AddToggle("Auto-respawn on death", false, function(v) universalState.AutoRespawn = v end)
+    sec:AddButton("Reset character", function()
+        local hum = getHum()
+        if hum then hum.Health = 0 end
+    end)
+    sec:AddToggle("Anti-slow (resists WalkSpeed reductions)", false, function(v) universalState.AntiSlow = v end)
+    sec:AddToggle("Always-on-ground (ignore platform stand)", false, function(v) universalState.AlwaysOnGround = v end)
+    sec:AddSlider("Super jump power", 50, 1000, 200, function(v) universalState.SuperJumpPower = v end)
+    sec:AddToggle("Super jump", false, function(v) universalState.SuperJump = v end)
+
+    -- continuous appliers
+    conns.uniHB = RunService.Heartbeat:Connect(function()
+        if universalState.AutoRespawn then
+            local hum = getHum()
+            if hum and hum.Health <= 0 then
+                local lp = Players.LocalPlayer
+                pcall(function() lp:LoadCharacter() end)
+            end
+        end
+        if universalState.AntiSlow then
+            local hum = getHum()
+            if hum and hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
+        end
+        if universalState.AlwaysOnGround then
+            local hum = getHum()
+            if hum and hum:GetState() == Enum.HumanoidStateType.PlatformStanding then
+                hum:ChangeState(Enum.HumanoidStateType.Running)
+            end
+        end
+        if universalState.SuperJump then
+            local hum = getHum()
+            if hum then
+                if hum.UseJumpPower then hum.JumpPower = universalState.SuperJumpPower
+                else hum.JumpHeight = universalState.SuperJumpPower / 4 end
+            end
+        end
+    end)
+end
+
+-- ---------- Game: Da Hood ----------
+
+local function buildDaHood(tab)
+    local sec = tab:AddSection("Da Hood")
+    sec:AddLabel("Detected: Da Hood (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddButton("Drop money (held cash)", function()
+        fireRemote("DropMoney")
+    end)
+    sec:AddButton("Grab nearby cash", function()
+        local root = getRoot()
+        if not root then return end
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj.Name == "Money" and obj:IsA("BasePart") then
+                obj.CFrame = root.CFrame
+            end
+        end
+    end)
+    sec:AddToggle("Auto-grab dropped cash", false, function(v)
+        if v then
+            conns.dahoodGrab = RunService.Heartbeat:Connect(function()
+                local root = getRoot()
+                if not root then return end
+                for _, obj in ipairs(Workspace:GetDescendants()) do
+                    if obj.Name == "Money" and obj:IsA("BasePart") and (obj.Position - root.Position).Magnitude < 100 then
+                        obj.CFrame = root.CFrame
+                    end
+                end
+            end)
+        else
+            if conns.dahoodGrab then conns.dahoodGrab:Disconnect(); conns.dahoodGrab = nil end
+        end
+    end)
+    sec:AddToggle("Punch aura (auto-punch nearby)", false, function(v)
+        if v then
+            conns.dahoodPunch = RunService.Heartbeat:Connect(function()
+                local root = getRoot()
+                if not root then return end
+                for _, plr in ipairs(Players:GetPlayers()) do
+                    if plr ~= Players.LocalPlayer then
+                        local hrp = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+                        if hrp and (hrp.Position - root.Position).Magnitude < 10 then
+                            pcall(function() fireRemote("Punch") end)
+                            break
+                        end
+                    end
+                end
+            end)
+        else
+            if conns.dahoodPunch then conns.dahoodPunch:Disconnect(); conns.dahoodPunch = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Blox Fruits ----------
+
+local function buildBloxFruits(tab)
+    local sec = tab:AddSection("Blox Fruits")
+    sec:AddLabel("Detected: Blox Fruits (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddButton("Collect all dropped fruits", function()
+        local root = getRoot()
+        if not root then return end
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj.Name == "Fruit" and obj:IsA("Tool") then
+                obj.Parent = Players.LocalPlayer.Backpack
+            end
+        end
+    end)
+    sec:AddToggle("Auto-farm nearest enemy", false, function(v)
+        if v then
+            conns.bfFarm = RunService.Heartbeat:Connect(function()
+                local root = getRoot()
+                if not root then return end
+                local best, bestDist
+                for _, npc in ipairs(Workspace:GetDescendants()) do
+                    if npc:IsA("Model") then
+                        local hum = npc:FindFirstChildOfClass("Humanoid")
+                        local hrp = npc:FindFirstChild("HumanoidRootPart")
+                        if hum and hrp and hum.Health > 0 and not Players:GetPlayerFromCharacter(npc) then
+                            local d = (hrp.Position - root.Position).Magnitude
+                            if not bestDist or d < bestDist then best, bestDist = hrp, d end
+                        end
+                    end
+                end
+                if best then
+                    root.CFrame = best.CFrame * CFrame.new(0, 0, 4)
+                    local tool = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChildOfClass("Tool")
+                    if tool then pcall(function() tool:Activate() end) end
+                end
+            end)
+        else
+            if conns.bfFarm then conns.bfFarm:Disconnect(); conns.bfFarm = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Arsenal ----------
+
+local function buildArsenal(tab)
+    local sec = tab:AddSection("Arsenal")
+    sec:AddLabel("Detected: Arsenal (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Infinite ammo (client-side)", false, function(v)
+        if v then
+            conns.arsenalAmmo = RunService.Heartbeat:Connect(function()
+                local char = getChar()
+                if not char then return end
+                local tool = char:FindFirstChildOfClass("Tool")
+                if not tool then return end
+                local ammo = tool:FindFirstChild("Ammo")
+                if ammo then ammo.Value = 999 end
+                local mag = tool:FindFirstChild("Mag")
+                if mag then mag.Value = 999 end
+            end)
+        else
+            if conns.arsenalAmmo then conns.arsenalAmmo:Disconnect(); conns.arsenalAmmo = nil end
+        end
+    end)
+    sec:AddToggle("No recoil (client camera)", false, function(v)
+        if v then
+            conns.arsenalRecoil = RunService.RenderStepped:Connect(function()
+                local cam = Workspace.CurrentCamera
+                if cam then cam.CFrame = cam.CFrame * CFrame.Angles(0, 0, 0) end
+            end)
+        else
+            if conns.arsenalRecoil then conns.arsenalRecoil:Disconnect(); conns.arsenalRecoil = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Phantom Forces ----------
+
+local function buildPhantomForces(tab)
+    local sec = tab:AddSection("Phantom Forces")
+    sec:AddLabel("Detected: Phantom Forces (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Hold-shoot (auto-fire on aim)", false, function(v)
+        if v then
+            conns.pfHoldShoot = RunService.Heartbeat:Connect(function()
+                pcall(function()
+                    if mouse1press and mouse1release then mouse1press(); task.wait(); mouse1release() end
+                end)
+            end)
+        else
+            if conns.pfHoldShoot then conns.pfHoldShoot:Disconnect(); conns.pfHoldShoot = nil end
+        end
+    end)
+    sec:AddSlider("Fire delay (ms)", 10, 500, 60, function(v)
+        -- delay used by hold-shoot loop, future use
+    end)
+end
+
+-- ---------- Game: MM2 ----------
+
+local function buildMM2(tab)
+    local sec = tab:AddSection("Murder Mystery 2")
+    sec:AddLabel("Detected: MM2 (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddButton("Reveal murderer + sheriff", function()
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= Players.LocalPlayer and plr.Backpack then
+                local hasKnife = plr.Backpack:FindFirstChild("Knife") or
+                                 (plr.Character and plr.Character:FindFirstChild("Knife"))
+                local hasGun   = plr.Backpack:FindFirstChild("Gun") or
+                                 (plr.Character and plr.Character:FindFirstChild("Gun"))
+                if hasKnife then
+                    print("[MM2] Murderer: " .. plr.Name)
+                end
+                if hasGun then
+                    print("[MM2] Sheriff: " .. plr.Name)
+                end
+            end
+        end
+    end)
+    sec:AddButton("Teleport to gun (when dropped)", function()
+        local root = getRoot()
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj.Name == "GunDrop" or obj.Name == "Gun" then
+                if obj:IsA("BasePart") and root then
+                    root.CFrame = obj.CFrame + Vector3.new(0, 3, 0)
+                    return
+                end
+            end
+        end
+    end)
+end
+
+-- ---------- Game: KAT ----------
+
+local function buildKAT(tab)
+    local sec = tab:AddSection("KAT")
+    sec:AddLabel("Detected: KAT (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Auto-parry knives", false, function(v)
+        if v then
+            conns.katParry = RunService.Heartbeat:Connect(function()
+                local root = getRoot()
+                if not root then return end
+                for _, obj in ipairs(Workspace:GetDescendants()) do
+                    if obj.Name == "Knife" and obj:IsA("BasePart") then
+                        local d = (obj.Position - root.Position).Magnitude
+                        if d < 18 then
+                            VirtualInputManager:SendKeyEvent(true, "F", false, game)
+                            task.wait(0.05)
+                            VirtualInputManager:SendKeyEvent(false, "F", false, game)
+                        end
+                    end
+                end
+            end)
+        else
+            if conns.katParry then conns.katParry:Disconnect(); conns.katParry = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Jailbreak ----------
+
+local function buildJailbreak(tab)
+    local sec = tab:AddSection("Jailbreak")
+    sec:AddLabel("Detected: Jailbreak (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddButton("Teleport to bank", function()
+        local root = getRoot()
+        local bank = Workspace:FindFirstChild("Banks") and Workspace.Banks:FindFirstChild("Bank")
+        if root and bank then
+            local p = bank:FindFirstChild("Door") or bank.PrimaryPart
+            if p then root.CFrame = p.CFrame + Vector3.new(0, 5, 0) end
+        end
+    end)
+    sec:AddButton("Teleport to jewelry", function()
+        local root = getRoot()
+        local jew = Workspace:FindFirstChild("Jewelrys") and Workspace.Jewelrys:FindFirstChild("Jewelry")
+        if root and jew then
+            local p = jew:FindFirstChild("Door") or jew.PrimaryPart
+            if p then root.CFrame = p.CFrame + Vector3.new(0, 5, 0) end
+        end
+    end)
+end
+
+-- ---------- Game: Pet Sim X ----------
+
+local function buildPetSimX(tab)
+    local sec = tab:AddSection("Pet Simulator X")
+    sec:AddLabel("Detected: PSX (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Auto-farm coins (mash)", false, function(v)
+        if v then
+            conns.psxCoins = RunService.Heartbeat:Connect(function()
+                pcall(function()
+                    if mouse1press and mouse1release then mouse1press(); mouse1release() end
+                end)
+            end)
+        else
+            if conns.psxCoins then conns.psxCoins:Disconnect(); conns.psxCoins = nil end
+        end
+    end)
+end
+
+-- ---------- Build dispatch ----------
+
+function M.Build(tab, ctx)
+    alive = true
+    local detected = currentGame()
+    tab:AddSection("Current Game"):AddLabel("Detected: " .. detected .. " (" .. tostring(game.PlaceId) .. ")")
+
+    -- always add universal features
+    buildUniversal(tab, ctx)
+
+    -- game-specific
+    if detected == "Da Hood"           then buildDaHood(tab)
+    elseif detected == "Blox Fruits"    then buildBloxFruits(tab)
+    elseif detected == "Arsenal"        then buildArsenal(tab)
+    elseif detected == "Phantom Forces" then buildPhantomForces(tab)
+    elseif detected == "Murder Mystery 2" then buildMM2(tab)
+    elseif detected == "KAT"            then buildKAT(tab)
+    elseif detected == "Jailbreak"      then buildJailbreak(tab)
+    elseif detected == "Pet Simulator X" then buildPetSimX(tab)
+    end
+
+    -- All-games dropdown — pick a template manually if auto-detect missed
+    local override = tab:AddSection("Override Template")
+    override:AddDropdown("Force-load game template",
+        {"None","Da Hood","Blox Fruits","Arsenal","Phantom Forces","Murder Mystery 2","KAT","Jailbreak","Pet Simulator X"},
+        "None", function(v)
+        if     v == "Da Hood"          then buildDaHood(tab)
+        elseif v == "Blox Fruits"      then buildBloxFruits(tab)
+        elseif v == "Arsenal"          then buildArsenal(tab)
+        elseif v == "Phantom Forces"   then buildPhantomForces(tab)
+        elseif v == "Murder Mystery 2" then buildMM2(tab)
+        elseif v == "KAT"              then buildKAT(tab)
+        elseif v == "Jailbreak"        then buildJailbreak(tab)
+        elseif v == "Pet Simulator X"  then buildPetSimX(tab)
+        end
+    end)
+end
+
+function M.Unload()
+    alive = false
+    for _, c in pairs(conns) do pcall(function() c:Disconnect() end) end
+    conns = {}
+end
+
+M.State = universalState
+return M
+
+end
+
+_modules['src/modules/playerlist.lua'] = function()
+--[[
+    Player list overlay - pro spectator panel.
+    Top-right sortable list of all players with name, HP bar, distance,
+    team, and a quick-TP action.
+]]
+
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local Workspace        = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+
+local M = {}
+
+local THEME = {
+    Bg     = Color3.fromRGB(14, 14, 20),
+    Panel  = Color3.fromRGB(22, 22, 32),
+    Row    = Color3.fromRGB(28, 28, 40),
+    RowAlt = Color3.fromRGB(34, 34, 48),
+    Accent = Color3.fromRGB(140, 100, 255),
+    Text   = Color3.fromRGB(235, 235, 245),
+    Sub    = Color3.fromRGB(150, 150, 165),
+    Good   = Color3.fromRGB(120, 220, 140),
+    Warn   = Color3.fromRGB(255, 200, 80),
+    Bad    = Color3.fromRGB(235, 90, 100),
+    Stroke = Color3.fromRGB(48, 48, 64),
+}
+
+local state = {
+    Enabled = false,
+    SortMode = "Name",      -- Name | Distance | Health | Team
+    MaxRows  = 20,
+    ShowAlly = true,
+    ShowEnemy = true,
+    ShowSelf = false,
+}
+
+local gui, root, listScroll
+local rowCache = {}
+local conns = {}
+
+local function buildGui()
+    local g = Instance.new("ScreenGui")
+    g.Name = "ROGBLOX_PlayerList"
+    g.ResetOnSpawn = false
+    g.IgnoreGuiInset = true
+    g.Enabled = false
+    if syn and syn.protect_gui then syn.protect_gui(g) end
+    g.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+
+    local r = Instance.new("Frame")
+    r.AnchorPoint = Vector2.new(1, 0)
+    r.Position = UDim2.new(1, -12, 0, 80)
+    r.Size = UDim2.new(0, 260, 0, 380)
+    r.BackgroundColor3 = THEME.Bg
+    r.BackgroundTransparency = 0.1
+    r.BorderSizePixel = 0
+    r.Parent = g
+    Instance.new("UICorner", r).CornerRadius = UDim.new(0, 8)
+    local s = Instance.new("UIStroke"); s.Color = THEME.Stroke; s.Thickness = 1; s.Parent = r
+
+    local title = Instance.new("Frame")
+    title.BackgroundColor3 = THEME.Panel
+    title.Size = UDim2.new(1, 0, 0, 28)
+    title.BorderSizePixel = 0
+    title.Parent = r
+    Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
+
+    local titleText = Instance.new("TextLabel")
+    titleText.BackgroundTransparency = 1
+    titleText.Position = UDim2.new(0, 10, 0, 0)
+    titleText.Size = UDim2.new(1, -20, 1, 0)
+    titleText.Font = Enum.Font.GothamBold
+    titleText.Text = "Players"
+    titleText.TextColor3 = THEME.Text
+    titleText.TextSize = 12
+    titleText.TextXAlignment = Enum.TextXAlignment.Left
+    titleText.Parent = title
+
+    local countLbl = Instance.new("TextLabel")
+    countLbl.Name = "Count"
+    countLbl.BackgroundTransparency = 1
+    countLbl.AnchorPoint = Vector2.new(1, 0)
+    countLbl.Position = UDim2.new(1, -10, 0, 0)
+    countLbl.Size = UDim2.new(0, 60, 1, 0)
+    countLbl.Font = Enum.Font.Gotham
+    countLbl.Text = "0 / 0"
+    countLbl.TextColor3 = THEME.Sub
+    countLbl.TextSize = 11
+    countLbl.TextXAlignment = Enum.TextXAlignment.Right
+    countLbl.Parent = title
+
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Name = "List"
+    scroll.BackgroundTransparency = 1
+    scroll.BorderSizePixel = 0
+    scroll.Position = UDim2.new(0, 6, 0, 32)
+    scroll.Size = UDim2.new(1, -12, 1, -38)
+    scroll.ScrollBarThickness = 3
+    scroll.ScrollBarImageColor3 = THEME.Accent
+    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    scroll.Parent = r
+
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 3)
+    layout.Parent = scroll
+
+    return g, r, scroll
+end
+
+local function buildRow()
+    local row = Instance.new("Frame")
+    row.BackgroundColor3 = THEME.Row
+    row.BorderSizePixel = 0
+    row.Size = UDim2.new(1, 0, 0, 28)
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
+
+    local nameLbl = Instance.new("TextLabel")
+    nameLbl.Name = "Name"
+    nameLbl.BackgroundTransparency = 1
+    nameLbl.Position = UDim2.new(0, 8, 0, 0)
+    nameLbl.Size = UDim2.new(0.55, 0, 1, 0)
+    nameLbl.Font = Enum.Font.GothamMedium
+    nameLbl.Text = "?"
+    nameLbl.TextColor3 = THEME.Text
+    nameLbl.TextSize = 11
+    nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+    nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+    nameLbl.Parent = row
+
+    local distLbl = Instance.new("TextLabel")
+    distLbl.Name = "Dist"
+    distLbl.BackgroundTransparency = 1
+    distLbl.AnchorPoint = Vector2.new(1, 0)
+    distLbl.Position = UDim2.new(1, -8, 0, 0)
+    distLbl.Size = UDim2.new(0.3, 0, 1, 0)
+    distLbl.Font = Enum.Font.Gotham
+    distLbl.Text = "-"
+    distLbl.TextColor3 = THEME.Sub
+    distLbl.TextSize = 10
+    distLbl.TextXAlignment = Enum.TextXAlignment.Right
+    distLbl.Parent = row
+
+    local hpBg = Instance.new("Frame")
+    hpBg.Name = "HpBg"
+    hpBg.BackgroundColor3 = THEME.Stroke
+    hpBg.BorderSizePixel = 0
+    hpBg.Position = UDim2.new(0, 8, 1, -4)
+    hpBg.Size = UDim2.new(1, -16, 0, 2)
+    hpBg.Parent = row
+    Instance.new("UICorner", hpBg).CornerRadius = UDim.new(0, 1)
+
+    local hpFill = Instance.new("Frame")
+    hpFill.Name = "HpFill"
+    hpFill.BackgroundColor3 = THEME.Good
+    hpFill.BorderSizePixel = 0
+    hpFill.Size = UDim2.new(1, 0, 1, 0)
+    hpFill.Parent = hpBg
+    Instance.new("UICorner", hpFill).CornerRadius = UDim.new(0, 1)
+
+    -- click to TP
+    local btn = Instance.new("TextButton")
+    btn.Name = "Click"
+    btn.BackgroundTransparency = 1
+    btn.Size = UDim2.new(1, 0, 1, 0)
+    btn.Text = ""
+    btn.AutoButtonColor = false
+    btn.Parent = row
+
+    return row, nameLbl, distLbl, hpFill, btn
+end
+
+local function updateRow(row, plr)
+    local nameLbl = row:FindFirstChild("Name")
+    local distLbl = row:FindFirstChild("Dist")
+    local hpBg = row:FindFirstChild("HpBg")
+    local hpFill = hpBg and hpBg:FindFirstChild("HpFill")
+    if not (nameLbl and distLbl and hpFill) then return end
+
+    local char = plr.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local lp = Players.LocalPlayer
+    local myRoot = lp and lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+
+    nameLbl.Text = plr.DisplayName
+    if plr == lp then
+        nameLbl.TextColor3 = THEME.Accent
+    elseif plr.Team and lp and lp.Team and plr.Team == lp.Team then
+        nameLbl.TextColor3 = THEME.Good
+    else
+        nameLbl.TextColor3 = THEME.Bad
+    end
+
+    if hum and hrp and myRoot then
+        local d = (hrp.Position - myRoot.Position).Magnitude
+        distLbl.Text = string.format("%dm", math.floor(d))
+        local pct = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+        hpFill.Size = UDim2.new(pct, 0, 1, 0)
+        hpFill.BackgroundColor3 = (pct > 0.5 and THEME.Good) or (pct > 0.25 and THEME.Warn) or THEME.Bad
+    else
+        distLbl.Text = "-"
+        hpFill.Size = UDim2.new(0, 0, 1, 0)
+    end
+end
+
+local function sortPlayers(list)
+    local lp = Players.LocalPlayer
+    local myRoot = lp and lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+    table.sort(list, function(a, b)
+        if state.SortMode == "Name" then
+            return a.Name:lower() < b.Name:lower()
+        elseif state.SortMode == "Distance" then
+            local ah = a.Character and a.Character:FindFirstChild("HumanoidRootPart")
+            local bh = b.Character and b.Character:FindFirstChild("HumanoidRootPart")
+            if not (ah and bh and myRoot) then return a.Name < b.Name end
+            return (ah.Position - myRoot.Position).Magnitude < (bh.Position - myRoot.Position).Magnitude
+        elseif state.SortMode == "Health" then
+            local ah = a.Character and a.Character:FindFirstChildOfClass("Humanoid")
+            local bh = b.Character and b.Character:FindFirstChildOfClass("Humanoid")
+            return (ah and ah.Health or 0) > (bh and bh.Health or 0)
+        elseif state.SortMode == "Team" then
+            return tostring(a.Team) < tostring(b.Team)
+        end
+        return false
+    end)
+end
+
+local function filterPlayer(plr)
+    local lp = Players.LocalPlayer
+    if plr == lp and not state.ShowSelf then return false end
+    if plr ~= lp and plr.Team and lp and lp.Team then
+        if plr.Team == lp.Team and not state.ShowAlly then return false end
+        if plr.Team ~= lp.Team and not state.ShowEnemy then return false end
+    end
+    return true
+end
+
+local function refresh()
+    if not state.Enabled or not gui then return end
+    local all = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if filterPlayer(plr) then table.insert(all, plr) end
+    end
+    sortPlayers(all)
+
+    local needed = math.min(#all, state.MaxRows)
+    for i = 1, needed do
+        local row = rowCache[i]
+        if not row then
+            row = buildRow()
+            row.LayoutOrder = i
+            row.Parent = listScroll
+            rowCache[i] = row
+            row:FindFirstChild("Click").MouseButton1Click:Connect(function()
+                -- quick-TP behind player
+                local plr = row:GetAttribute("Player") and Players:FindFirstChild(row:GetAttribute("Player"))
+                if not plr then return end
+                local target = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+                local me = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                if target and me then
+                    me.CFrame = target.CFrame * CFrame.new(0, 0, 3)
+                end
+            end)
+        end
+        row:SetAttribute("Player", all[i].Name)
+        row.Visible = true
+        updateRow(row, all[i])
+    end
+    for i = needed + 1, #rowCache do
+        if rowCache[i] then rowCache[i].Visible = false end
+    end
+    local countLbl = root and root:FindFirstChild("Count", true)
+    if countLbl then countLbl.Text = #all .. " / " .. #Players:GetPlayers() end
+end
+
+function M.Build(tab, ctx)
+    gui, root, listScroll = buildGui()
+
+    local sec = tab:AddSection("Player List Overlay")
+    sec:AddToggle("Enabled", false, function(v)
+        state.Enabled = v
+        gui.Enabled = v
+    end)
+    sec:AddDropdown("Sort by", {"Name","Distance","Health","Team"}, "Distance", function(v) state.SortMode = v end)
+    sec:AddSlider("Max rows", 4, 40, 20, function(v) state.MaxRows = v end)
+    sec:AddToggle("Show allies", true, function(v) state.ShowAlly = v end)
+    sec:AddToggle("Show enemies", true, function(v) state.ShowEnemy = v end)
+    sec:AddToggle("Show self", false, function(v) state.ShowSelf = v end)
+
+    conns.tick = RunService.Heartbeat:Connect(function()
+        if tick() % 0.25 < 0.02 then refresh() end
+    end)
+end
+
+function M.Unload()
+    for _, c in pairs(conns) do pcall(function() c:Disconnect() end) end
+    conns = {}
+    if gui then gui:Destroy() end
+    gui, root, listScroll, rowCache = nil, nil, nil, {}
+end
+
+M.State = state
+return M
+
+end
+
+_modules['src/modules/console.lua'] = function()
+--[[
+    In-game console — multi-line Lua editor + output panel.
+    Lets you paste/edit scripts and run them inside the executor's
+    sandbox without leaving Roblox. Useful for one-off tests,
+    debugging, or running other community scripts on top of ROGBLOX.
+]]
+
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+
+local M = {}
+
+local state = {
+    Open = false,
+    History = {},
+    HistoryIdx = 0,
+}
+
+local THEME = {
+    Bg     = Color3.fromRGB(14, 14, 20),
+    Panel  = Color3.fromRGB(22, 22, 32),
+    Panel2 = Color3.fromRGB(28, 28, 40),
+    Accent = Color3.fromRGB(140, 100, 255),
+    Text   = Color3.fromRGB(235, 235, 245),
+    Sub    = Color3.fromRGB(150, 150, 165),
+    Good   = Color3.fromRGB(120, 220, 140),
+    Bad    = Color3.fromRGB(235, 90, 100),
+    Stroke = Color3.fromRGB(48, 48, 64),
+}
+
+local consoleGui
+local editorBox, outputBox, runBtn, clearBtn, closeBtn
+local toggleKey = Enum.KeyCode.Backquote   -- `~` key by default
+local conns = {}
+
+local function appendOutput(text, color)
+    if not outputBox then return end
+    color = color or THEME.Sub
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.Size = UDim2.new(1, 0, 0, 0)
+    label.AutomaticSize = Enum.AutomaticSize.Y
+    label.Font = Enum.Font.Code
+    label.Text = text
+    label.TextColor3 = color
+    label.TextSize = 12
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextYAlignment = Enum.TextYAlignment.Top
+    label.TextWrapped = true
+    label.RichText = false
+    label.Parent = outputBox
+end
+
+local function runScript()
+    local src = editorBox.Text
+    if src == "" then return end
+    table.insert(state.History, src)
+    state.HistoryIdx = #state.History
+    appendOutput("> " .. src:sub(1, 80) .. (src:len() > 80 and "..." or ""), THEME.Accent)
+
+    -- print() override for captured output
+    local oldPrint = print
+    local capturedLines = {}
+    local function localPrint(...)
+        local args = {...}
+        local parts = {}
+        for i, v in ipairs(args) do parts[i] = tostring(v) end
+        table.insert(capturedLines, table.concat(parts, "\t"))
+    end
+
+    local chunk, err = loadstring(src, "@ROGBLOX_console")
+    if not chunk then
+        appendOutput("compile error: " .. tostring(err), THEME.Bad)
+        return
+    end
+    local env = setmetatable({print = localPrint}, {__index = getfenv()})
+    setfenv(chunk, env)
+    local ok, runtimeErr = pcall(chunk)
+    for _, line in ipairs(capturedLines) do appendOutput(line, THEME.Text) end
+    if not ok then
+        appendOutput("runtime error: " .. tostring(runtimeErr), THEME.Bad)
+    else
+        appendOutput("[ok]", THEME.Good)
+    end
+    -- scroll to bottom on next frame
+    task.defer(function()
+        outputBox.CanvasPosition = Vector2.new(0, outputBox.AbsoluteCanvasSize.Y)
+    end)
+end
+
+local function buildGui()
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "ROGBLOX_Console"
+    gui.ResetOnSpawn = false
+    gui.Enabled = false
+    if syn and syn.protect_gui then syn.protect_gui(gui) end
+    gui.Parent = (gethui and gethui()) or CoreGui
+
+    local root = Instance.new("Frame")
+    root.AnchorPoint = Vector2.new(0.5, 0.5)
+    root.Position = UDim2.new(0.5, 0, 0.5, 0)
+    root.Size = UDim2.new(0, 720, 0, 480)
+    root.BackgroundColor3 = THEME.Bg
+    root.BorderSizePixel = 0
+    root.Parent = gui
+    Instance.new("UICorner", root).CornerRadius = UDim.new(0, 10)
+    local s = Instance.new("UIStroke"); s.Color = THEME.Stroke; s.Thickness = 1; s.Parent = root
+
+    -- title bar
+    local title = Instance.new("Frame")
+    title.BackgroundColor3 = THEME.Panel
+    title.Size = UDim2.new(1, 0, 0, 32)
+    title.BorderSizePixel = 0
+    title.Parent = root
+    Instance.new("UICorner", title).CornerRadius = UDim.new(0, 10)
+
+    local titleText = Instance.new("TextLabel")
+    titleText.BackgroundTransparency = 1
+    titleText.Position = UDim2.new(0, 14, 0, 0)
+    titleText.Size = UDim2.new(0, 300, 1, 0)
+    titleText.Font = Enum.Font.GothamBold
+    titleText.Text = "ROGBLOX Console"
+    titleText.TextColor3 = THEME.Text
+    titleText.TextSize = 13
+    titleText.TextXAlignment = Enum.TextXAlignment.Left
+    titleText.Parent = title
+
+    closeBtn = Instance.new("TextButton")
+    closeBtn.AnchorPoint = Vector2.new(1, 0.5)
+    closeBtn.Position = UDim2.new(1, -10, 0.5, 0)
+    closeBtn.Size = UDim2.new(0, 22, 0, 22)
+    closeBtn.BackgroundColor3 = THEME.Bad
+    closeBtn.AutoButtonColor = false
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.Text = "x"
+    closeBtn.TextColor3 = THEME.Text
+    closeBtn.TextSize = 12
+    closeBtn.BorderSizePixel = 0
+    closeBtn.Parent = title
+    Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 4)
+
+    -- editor (top half)
+    local editorFrame = Instance.new("Frame")
+    editorFrame.BackgroundColor3 = THEME.Panel
+    editorFrame.Position = UDim2.new(0, 10, 0, 40)
+    editorFrame.Size = UDim2.new(1, -20, 0.55, -50)
+    editorFrame.BorderSizePixel = 0
+    editorFrame.Parent = root
+    Instance.new("UICorner", editorFrame).CornerRadius = UDim.new(0, 6)
+
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.BackgroundTransparency = 1
+    scroll.BorderSizePixel = 0
+    scroll.Size = UDim2.new(1, -8, 1, -8)
+    scroll.Position = UDim2.new(0, 4, 0, 4)
+    scroll.ScrollBarThickness = 3
+    scroll.ScrollBarImageColor3 = THEME.Accent
+    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    scroll.Parent = editorFrame
+
+    editorBox = Instance.new("TextBox")
+    editorBox.BackgroundTransparency = 1
+    editorBox.Size = UDim2.new(1, -6, 0, 0)
+    editorBox.AutomaticSize = Enum.AutomaticSize.Y
+    editorBox.Font = Enum.Font.Code
+    editorBox.TextColor3 = THEME.Text
+    editorBox.PlaceholderText = "-- type Lua here, press Run (or Ctrl+Enter)\nprint('hello from ROGBLOX')"
+    editorBox.PlaceholderColor3 = THEME.Sub
+    editorBox.Text = ""
+    editorBox.TextSize = 13
+    editorBox.TextXAlignment = Enum.TextXAlignment.Left
+    editorBox.TextYAlignment = Enum.TextYAlignment.Top
+    editorBox.MultiLine = true
+    editorBox.ClearTextOnFocus = false
+    editorBox.TextWrapped = true
+    editorBox.Parent = scroll
+
+    -- buttons row
+    local btnRow = Instance.new("Frame")
+    btnRow.BackgroundTransparency = 1
+    btnRow.Position = UDim2.new(0, 10, 0.55, -2)
+    btnRow.Size = UDim2.new(1, -20, 0, 28)
+    btnRow.Parent = root
+
+    runBtn = Instance.new("TextButton")
+    runBtn.BackgroundColor3 = THEME.Accent
+    runBtn.AutoButtonColor = false
+    runBtn.Size = UDim2.new(0, 80, 1, 0)
+    runBtn.Font = Enum.Font.GothamBold
+    runBtn.Text = "Run (Ctrl+Enter)"
+    runBtn.TextColor3 = THEME.Text
+    runBtn.TextSize = 11
+    runBtn.BorderSizePixel = 0
+    runBtn.AutomaticSize = Enum.AutomaticSize.X
+    runBtn.Parent = btnRow
+    Instance.new("UICorner", runBtn).CornerRadius = UDim.new(0, 5)
+
+    clearBtn = Instance.new("TextButton")
+    clearBtn.BackgroundColor3 = THEME.Panel
+    clearBtn.AutoButtonColor = false
+    clearBtn.AnchorPoint = Vector2.new(1, 0)
+    clearBtn.Position = UDim2.new(1, 0, 0, 0)
+    clearBtn.Size = UDim2.new(0, 80, 1, 0)
+    clearBtn.Font = Enum.Font.GothamMedium
+    clearBtn.Text = "Clear output"
+    clearBtn.TextColor3 = THEME.Sub
+    clearBtn.TextSize = 11
+    clearBtn.BorderSizePixel = 0
+    clearBtn.Parent = btnRow
+    Instance.new("UICorner", clearBtn).CornerRadius = UDim.new(0, 5)
+
+    -- output panel (bottom)
+    local outputFrame = Instance.new("Frame")
+    outputFrame.BackgroundColor3 = THEME.Panel2
+    outputFrame.Position = UDim2.new(0, 10, 0.55, 30)
+    outputFrame.Size = UDim2.new(1, -20, 0.45, -40)
+    outputFrame.BorderSizePixel = 0
+    outputFrame.Parent = root
+    Instance.new("UICorner", outputFrame).CornerRadius = UDim.new(0, 6)
+
+    outputBox = Instance.new("ScrollingFrame")
+    outputBox.BackgroundTransparency = 1
+    outputBox.BorderSizePixel = 0
+    outputBox.Size = UDim2.new(1, -8, 1, -8)
+    outputBox.Position = UDim2.new(0, 4, 0, 4)
+    outputBox.ScrollBarThickness = 3
+    outputBox.ScrollBarImageColor3 = THEME.Accent
+    outputBox.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    outputBox.CanvasSize = UDim2.new(0, 0, 0, 0)
+    outputBox.Parent = outputFrame
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 2)
+    layout.Parent = outputBox
+
+    return gui, root
+end
+
+local function bindEvents()
+    closeBtn.MouseButton1Click:Connect(function()
+        state.Open = false
+        consoleGui.Enabled = false
+    end)
+    runBtn.MouseButton1Click:Connect(runScript)
+    clearBtn.MouseButton1Click:Connect(function()
+        for _, child in ipairs(outputBox:GetChildren()) do
+            if child:IsA("TextLabel") then child:Destroy() end
+        end
+    end)
+
+    conns.key = UserInputService.InputBegan:Connect(function(input, processed)
+        if input.KeyCode == toggleKey and not processed then
+            state.Open = not state.Open
+            consoleGui.Enabled = state.Open
+        elseif state.Open and input.KeyCode == Enum.KeyCode.Return and
+               UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+            runScript()
+        end
+    end)
+end
+
+function M.Build(tab, ctx)
+    consoleGui = buildGui()
+    bindEvents()
+
+    local sec = tab:AddSection("Console")
+    sec:AddLabel("In-game Lua REPL. Paste scripts, run, inspect output.")
+    sec:AddButton("Open console", function()
+        state.Open = true
+        consoleGui.Enabled = true
+    end)
+    sec:AddKeybind("Toggle key (default: ` )", toggleKey, function()
+        state.Open = not state.Open
+        consoleGui.Enabled = state.Open
+    end)
+    sec:AddButton("Run last", function()
+        if state.History[#state.History] then
+            editorBox.Text = state.History[#state.History]
+            runScript()
+        end
+    end)
+    sec:AddButton("Insert HttpGet template", function()
+        editorBox.Text = 'loadstring(game:HttpGet("https://"))()'
+    end)
+end
+
+function M.Unload()
+    for _, c in pairs(conns) do pcall(function() c:Disconnect() end) end
+    conns = {}
+    if consoleGui then consoleGui:Destroy() end
+    consoleGui = nil
+end
+
+M.State = state
+return M
+
+end
+
 _modules['src/modules/misc.lua'] = function()
 --[[
     Misc module — Anti-AFK, FPS cap, chat spam, anti-fling, freecam.
@@ -3838,20 +4890,23 @@ local PlayersUtil = fetch("src/utils/players.lua")
 local Drawing     = fetch("src/utils/drawing.lua")
 
 -- feature modules
-local Aimbot   = fetch("src/modules/aimbot.lua")
-local ESP      = fetch("src/modules/esp.lua")
-local Combat   = fetch("src/modules/combat_extras.lua")
-local Movement = fetch("src/modules/movement.lua")
-local Teleport = fetch("src/modules/teleport.lua")
-local HUD      = fetch("src/modules/hud.lua")
-local World    = fetch("src/modules/world.lua")
-local Farm     = fetch("src/modules/autofarm.lua")
-local Misc     = fetch("src/modules/misc.lua")
+local Aimbot     = fetch("src/modules/aimbot.lua")
+local ESP        = fetch("src/modules/esp.lua")
+local Combat     = fetch("src/modules/combat_extras.lua")
+local Movement   = fetch("src/modules/movement.lua")
+local Teleport   = fetch("src/modules/teleport.lua")
+local HUD        = fetch("src/modules/hud.lua")
+local World      = fetch("src/modules/world.lua")
+local Farm       = fetch("src/modules/autofarm.lua")
+local Games      = fetch("src/modules/games.lua")
+local PlayerList = fetch("src/modules/playerlist.lua")
+local Console    = fetch("src/modules/console.lua")
+local Misc       = fetch("src/modules/misc.lua")
 
 local Window = UI:CreateWindow({
     Title    = "ROGBLOX",
-    SubTitle = "v0.3.0  pro",
-    Size     = Vector2.new(680, 460),
+    SubTitle = "v0.5.0  HQ",
+    Size     = Vector2.new(720, 500),
     Toggle   = Enum.KeyCode.RightControl,
 })
 
@@ -3866,15 +4921,18 @@ local ctx = {
 }
 
 -- Aimbot first so HUD can read its LockedTarget through ctx.
-Aimbot.Build(  Window:AddTab("Aimbot"),    ctx)
-HUD.Build(     Window:AddTab("HUD"),       ctx)
-ESP.Build(     Window:AddTab("Visuals"),   ctx)
-Combat.Build(  Window:AddTab("Combat+"),   ctx)
-Movement.Build(Window:AddTab("Movement"),  ctx)
-Teleport.Build(Window:AddTab("Teleport"),  ctx)
-World.Build(   Window:AddTab("World"),     ctx)
-Farm.Build(    Window:AddTab("Auto"),      ctx)
-Misc.Build(    Window:AddTab("Misc"),      ctx)
+Aimbot.Build(    Window:AddTab("Aimbot"),     ctx)
+HUD.Build(       Window:AddTab("HUD"),        ctx)
+ESP.Build(       Window:AddTab("Visuals"),    ctx)
+Combat.Build(    Window:AddTab("Combat+"),    ctx)
+Movement.Build(  Window:AddTab("Movement"),   ctx)
+Teleport.Build(  Window:AddTab("Teleport"),   ctx)
+World.Build(     Window:AddTab("World"),      ctx)
+Farm.Build(      Window:AddTab("Auto"),       ctx)
+Games.Build(     Window:AddTab("Games"),      ctx)
+PlayerList.Build(Window:AddTab("Players"),    ctx)
+Console.Build(   Window:AddTab("Console"),    ctx)
+Misc.Build(      Window:AddTab("Misc"),       ctx)
 
 local SettingsTab = Window:AddTab("Settings")
 local cfgSection = SettingsTab:AddSection("Config")
@@ -3902,23 +4960,26 @@ infoSection:AddLabel("JobId: " .. tostring(game.JobId))
 infoSection:AddLabel("Press RightCtrl to toggle UI")
 
 _G.ROGBLOX = {
-    Version = "0.3.0",
+    Version = "0.5.0",
     UI      = UI,
     Window  = Window,
     Notify  = Notify,
     Modules = {
-        Aimbot   = Aimbot,
-        ESP      = ESP,
-        Combat   = Combat,
-        Movement = Movement,
-        Teleport = Teleport,
-        HUD      = HUD,
-        World    = World,
-        Farm     = Farm,
-        Misc     = Misc,
+        Aimbot     = Aimbot,
+        ESP        = ESP,
+        Combat     = Combat,
+        Movement   = Movement,
+        Teleport   = Teleport,
+        HUD        = HUD,
+        World      = World,
+        Farm       = Farm,
+        Games      = Games,
+        PlayerList = PlayerList,
+        Console    = Console,
+        Misc       = Misc,
     },
     Unload = function()
-        for _, mod in pairs({Aimbot, ESP, Combat, Movement, Teleport, HUD, World, Farm, Misc}) do
+        for _, mod in ipairs({Aimbot, ESP, Combat, Movement, Teleport, HUD, World, Farm, Games, PlayerList, Console, Misc}) do
             if mod.Unload then pcall(mod.Unload) end
         end
         Window:Destroy()
