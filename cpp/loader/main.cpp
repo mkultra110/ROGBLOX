@@ -292,14 +292,17 @@ static ScrapeResult scrape_exe_candidates(const std::wstring& page_url) {
         return sr;
     }
 
+    // Raw strings use a non-empty delimiter (RE) because the regex content
+    // contains `)"` sequences - with an empty delimiter the literal would
+    // close early.
     std::regex patterns[] = {
-        std::regex(R"((?:href|src|data-href|data-url|data-link|data-download)\s*=\s*"([^"]+\.exe[^"]*)")",
+        std::regex(R"RE((?:href|src|data-href|data-url|data-link|data-download)\s*=\s*"([^"]+\.exe[^"]*)")RE",
                    std::regex::icase),
-        std::regex(R"((?:href|src|data-href|data-url|data-link|data-download)\s*=\s*'([^']+\.exe[^']*)')",
+        std::regex(R"RE((?:href|src|data-href|data-url|data-link|data-download)\s*=\s*'([^']+\.exe[^']*)')RE",
                    std::regex::icase),
-        std::regex(R"("(https?://[^"]+\.exe[^"]*)")",
+        std::regex(R"RE("(https?://[^"]+\.exe[^"]*)")RE",
                    std::regex::icase),
-        std::regex(R"('(https?://[^']+\.exe[^']*)')",
+        std::regex(R"RE('(https?://[^']+\.exe[^']*)')RE",
                    std::regex::icase),
     };
 
