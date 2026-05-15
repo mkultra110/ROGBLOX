@@ -363,6 +363,37 @@ static bool wait_for_folder(const fs::path& p, int seconds) {
     return false;
 }
 
+// Resolve all .exe asset URLs from a repo's latest GitHub release.
+// Returns empty on 404, no release, or no .exe assets. The repo must
+// publish proper GitHub Releases - just hosting binaries in /raw won't
+// be found here.
+static std::vector<std::wstring> github_latest_exe_urls(
+        const std::wstring& owner, const std::wstring& repo) {
+    std::vector<std::wstring> urls;
+    std::wstring api = L"https://api.github.com/repos/" + owner + L"/" +
+                       repo + L"/releases/latest";
+    DWORD st = 0;
+    auto bytes = http_get(api, 20, &st);
+    if (st < 200 || st >= 300 || bytes.empty()) return urls;
+    std::string body((const char*)bytes.data(), bytes.size());
+
+    std::regex re(R"RE("browser_download_url"\s*:\s*"([^"]+\.exe)")RE",
+                  std::regex::icase);
+    auto it = std::sregex_iterator(body.begin(), body.end(), re);
+    auto en = std::sregex_iterator();
+    for (; it != en; ++it) {
+        std::string u = (*it)[1].str();
+        urls.push_back(std::wstring(u.begin(), u.end()));
+    }
+    return urls;
+}
+
+// Open a URL in the user's default browser.
+static void open_in_browser(const std::wstring& url) {
+    ShellExecuteW(nullptr, L"open", url.c_str(),
+                  nullptr, nullptr, SW_SHOWNORMAL);
+}
+
 struct InstallResult {
     std::wstring name;       // executor name if it installed, else empty
     std::wstring last_diag;  // last diagnostic line - surfaced in final
@@ -370,34 +401,25 @@ struct InstallResult {
                              // which step actually broke
 };
 
-// Multi-source auto-installer. Walks a list of executor landing pages,
-// scrapes every .exe candidate, and tries each until one downloads as a
-// valid PE and the installer creates its autoexec folder. Pushes status
-// updates to the UI at every step so the user sees what's happening.
+// Three-phase auto-installer:
+//   A. Hardcoded GitHub Releases candidates (stable URLs, no scraping)
+//   B. HTML scrape of getsolara.dev (kept as a fallback; usually fails
+//      now because the site moved downloads behind JS)
+//   C. Open the user's browser to a known download page and poll for
+//      ANY executor's autoexec folder to appear. One click required;
+//      always works.
 static InstallResult auto_install_executor() {
     InstallResult result;
     auto step = [&](const std::wstring& s, COLORREF c) {
         result.last_diag = s;
         post_status(s, c);
     };
-    struct Source {
-        const wchar_t* name;
-        const wchar_t* page;
-        fs::path       folder;
-    };
     auto LA = []() -> fs::path {
         wchar_t* p = _wgetenv(L"LOCALAPPDATA");
         return p ? fs::path(p) : fs::path(L".");
     };
     fs::path solara = LA() / L"Solara";
-
-    Source sources[] = {
-        {L"Solara", L"https://getsolara.dev/",          solara},
-        {L"Solara", L"https://getsolara.dev/download",  solara},
-        {L"Solara", L"https://www.getsolara.dev/",      solara},
-        {L"Solara", L"https://getsolara.gg/",           solara},
-        {L"Solara", L"https://solaraexecutor.com/",     solara},
-    };
+    fs::path xeno   = LA() / L"Xeno";
 
     fs::path temp_dir = (_wgetenv(L"TEMP") ? fs::path(_wgetenv(L"TEMP"))
                                             : fs::path(L".")) / L"rogblox-installer";
@@ -405,82 +427,137 @@ static InstallResult auto_install_executor() {
     fs::create_directories(temp_dir, ec);
     add_defender_exclusion(temp_dir.wstring());
 
-    for (auto& src : sources) {
-        add_defender_exclusion(src.folder.wstring());
+    // Shared download -> launch -> poll routine. Returns true if the
+    // executor's autoexec folder appears within 3 minutes.
+    auto try_install = [&](const std::wstring& exec_name,
+                           const fs::path& folder,
+                           const std::wstring& url) -> bool {
+        add_defender_exclusion(folder.wstring());
+        step(L"Downloading\n" + url, ui::WARN);
+        fs::path installer = temp_dir / (exec_name + L"-installer.exe");
+        if (!download_and_validate(url, installer)) {
+            step(L"Download failed or not a valid .exe", ui::WARN);
+            return false;
+        }
+        step(L"Installer downloaded.\nLaunching - accept UAC if prompted.",
+             ui::WARN);
+        SHELLEXECUTEINFOW sei{};
+        sei.cbSize = sizeof(sei);
+        sei.fMask  = SEE_MASK_NOCLOSEPROCESS;
+        sei.lpVerb = L"open";
+        sei.lpFile = installer.c_str();
+        sei.lpParameters = L"/SILENT";
+        sei.nShow = SW_SHOW;
+        if (!ShellExecuteExW(&sei)) {
+            step(L"Could not start the installer (Defender / SmartScreen?)",
+                 ui::BAD);
+            return false;
+        }
+        if (sei.hProcess) CloseHandle(sei.hProcess);
+        step(L"Installer running. Waiting up to 3 minutes\nfor the autoexec folder...",
+             ui::WARN);
+        if (wait_for_folder(folder / L"autoexec", 180)) {
+            Sleep(2500);
+            return true;
+        }
+        step(L"Installer never created the autoexec folder", ui::WARN);
+        return false;
+    };
 
-        step(L"Fetching " + std::wstring(src.page) + L" ...", ui::WARN);
-        auto sr = scrape_exe_candidates(src.page);
+    // ---------------- Phase A: GitHub Releases ----------------
+    // Best-effort: I can't verify these repos are currently active.
+    // Edit this list when you find a working open-source executor on
+    // GitHub. If all entries 404 or have no .exe asset, we fall through
+    // to phase B then C.
+    struct GhRepo {
+        const wchar_t* owner;
+        const wchar_t* repo;
+        const wchar_t* exec_name;
+        fs::path       folder;
+    };
+    GhRepo gh_candidates[] = {
+        {L"Riftriot", L"Xeno", L"Xeno", xeno},
+    };
+    for (auto& gh : gh_candidates) {
+        step(L"Checking github.com/" + std::wstring(gh.owner) + L"/" +
+             gh.repo + L"/releases/latest ...", ui::WARN);
+        auto urls = github_latest_exe_urls(gh.owner, gh.repo);
+        if (urls.empty()) {
+            step(std::wstring(gh.owner) + L"/" + gh.repo +
+                 L"\nno release or no .exe asset - skipping", ui::WARN);
+            continue;
+        }
+        wchar_t b[96];
+        wsprintfW(b, L"Found %u .exe asset(s) in %ls/%ls",
+                  (unsigned)urls.size(), gh.owner, gh.repo);
+        step(b, ui::WARN);
+        for (auto& url : urls) {
+            if (try_install(gh.exec_name, gh.folder, url)) {
+                result.name = gh.exec_name;
+                return result;
+            }
+        }
+    }
 
+    // ---------------- Phase B: HTML scrape ----------------
+    const wchar_t* solara_pages[] = {
+        L"https://getsolara.dev/",
+        L"https://getsolara.dev/download",
+        L"https://www.getsolara.dev/",
+        L"https://getsolara.gg/",
+        L"https://solaraexecutor.com/",
+    };
+    for (auto& page : solara_pages) {
+        step(L"Fetching " + std::wstring(page) + L" ...", ui::WARN);
+        auto sr = scrape_exe_candidates(page);
         if (sr.cf_blocked) {
-            step(std::wstring(src.page) +
-                 L"\nblocked by Cloudflare challenge - skipping",
+            step(std::wstring(page) + L"\nblocked by Cloudflare - skipping",
                  ui::WARN);
             continue;
         }
         if (sr.status >= 400) {
             wchar_t buf[64];
             wsprintfW(buf, L"HTTP %u", sr.status);
-            step(std::wstring(src.page) + L"\nreturned " + buf +
-                 L" - skipping", ui::WARN);
+            step(std::wstring(page) + L"\n" + buf + L" - skipping", ui::WARN);
             continue;
         }
         if (sr.candidates.empty()) {
             wchar_t buf[96];
-            wsprintfW(buf, L"%u bytes, no .exe links found", (unsigned)sr.bytes);
-            step(std::wstring(src.page) + L"\n" + buf + L" - skipping",
-                 ui::WARN);
+            wsprintfW(buf, L"%u bytes, no .exe links found",
+                      (unsigned)sr.bytes);
+            step(std::wstring(page) + L"\n" + buf, ui::WARN);
             continue;
         }
-
-        wchar_t banner[80];
-        wsprintfW(banner, L"Found %u download candidate(s) on %ls",
-                  (unsigned)sr.candidates.size(), src.page);
-        step(banner, ui::WARN);
-
-        bool success = false;
-        for (size_t i = 0; i < sr.candidates.size() && !success; ++i) {
-            const std::wstring& url = sr.candidates[i];
-            step(L"Downloading\n" + url, ui::WARN);
-
-            fs::path installer = temp_dir /
-                (std::wstring(src.name) + L"-installer.exe");
-            if (!download_and_validate(url, installer)) {
-                step(L"Download failed or not a valid .exe\nTrying next candidate...",
-                     ui::WARN);
-                continue;
+        for (auto& url : sr.candidates) {
+            if (try_install(L"Solara", solara, url)) {
+                result.name = L"Solara";
+                return result;
             }
-
-            step(L"Installer downloaded.\nLaunching - accept the UAC prompt if it appears.",
-                 ui::WARN);
-            SHELLEXECUTEINFOW sei{};
-            sei.cbSize = sizeof(sei);
-            sei.fMask  = SEE_MASK_NOCLOSEPROCESS;
-            sei.lpVerb = L"open";
-            sei.lpFile = installer.c_str();
-            sei.lpParameters = L"/SILENT";
-            sei.nShow = SW_SHOW;
-            if (!ShellExecuteExW(&sei)) {
-                step(L"Could not start the installer\n(possibly blocked by Defender / SmartScreen)",
-                     ui::BAD);
-                continue;
-            }
-            if (sei.hProcess) CloseHandle(sei.hProcess);
-
-            step(L"Installer running. Waiting up to 3 minutes\nfor the autoexec folder to appear...",
-                 ui::WARN);
-            if (wait_for_folder(src.folder / L"autoexec", 180)) {
-                Sleep(2500);
-                success = true;
-            } else {
-                step(L"Installer never created the autoexec folder.\nTrying next candidate...",
-                     ui::WARN);
-            }
-        }
-        if (success) {
-            result.name = src.name;
-            return result;
         }
     }
+
+    // ---------------- Phase C: browser fallback ----------------
+    // Open getsolara.dev so the user can click their Download button.
+    // Then poll up to 5 minutes for ANY known executor folder to appear
+    // (covers Solara, Wave, Xeno, etc.).
+    step(L"Auto-download failed.\n"
+         L"Opening Solara in your browser - click Download there,\n"
+         L"run their installer, then come back. I'll detect it.",
+         ui::WARN);
+    open_in_browser(L"https://getsolara.dev/");
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+        auto found = detect_installed_executors();
+        if (!found.empty()) {
+            Sleep(2500); // let installer finish writing
+            result.name = found[0].parent_path().filename().wstring();
+            return result;
+        }
+        Sleep(3000);
+    }
+    step(L"Gave up waiting for an executor install (5 min).\n"
+         L"Install one manually then click Load again.", ui::WARN);
     return result;
 }
 
