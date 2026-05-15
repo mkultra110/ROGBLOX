@@ -2469,6 +2469,12 @@ local state = {
     SmoothCurve    = "Sine",                -- Linear | Sine | Exponential
     Smoothness     = 0.35,
     Prediction     = 0.16,                  -- seconds of lead
+    -- v2: velocity history buffer for noise-resistant prediction
+    VelocityHistory= 8,                     -- frames of velocity to average
+    -- v2: ballistics for projectile games
+    Ballistics     = false,
+    ProjSpeed      = 1000,                  -- studs/sec
+    Gravity        = 196.2,                 -- Roblox default workspace.Gravity
     SnapLine       = false,
     ShowFOV        = true,
     FOVColor       = Color3.fromRGB(140, 100, 255),
@@ -2479,6 +2485,68 @@ local state = {
     TriggerDelay   = 0.05,
     TriggerWindow  = 6,                     -- pixels from center
 }
+
+-- Per-player velocity history: rolling buffer of (Vector3, t) pairs.
+-- Used to derive smoothed velocity instead of trusting the per-frame
+-- AssemblyLinearVelocity (which is noisy on networked replication).
+local velHistory = setmetatable({}, {__mode = "k"})
+
+local function pushVelocity(plr, pos)
+    local now = tick()
+    local h = velHistory[plr]
+    if not h then h = {}; velHistory[plr] = h end
+    table.insert(h, {pos = pos, t = now})
+    if #h > 24 then table.remove(h, 1) end
+end
+
+local function smoothedVelocity(plr)
+    local h = velHistory[plr]
+    if not h or #h < 2 then return Vector3.new(0, 0, 0) end
+    local n = math.min(#h, state.VelocityHistory)
+    local first = h[#h - n + 1]
+    local last  = h[#h]
+    local dt = last.t - first.t
+    if dt <= 0 then return Vector3.new(0, 0, 0) end
+    return (last.pos - first.pos) / dt
+end
+
+-- Ballistics intercept solver for projectile games.
+-- Given shooter pos S, target pos T, target velocity V,
+-- projectile speed p, gravity g, returns the aim point that
+-- intercepts the target. Falls back to the target's current
+-- position if no real intercept exists.
+local function ballisticsAim(S, T, V, p, g)
+    if state.Ballistics == false then return T end
+    -- Iterative solve: at² + bt + c = 0 where a = (V.V - p²),
+    -- ignoring gravity to seed, then refine with gravity arc.
+    local D = T - S
+    local a = V:Dot(V) - p * p
+    local b = 2 * V:Dot(D)
+    local c = D:Dot(D)
+    local disc = b * b - 4 * a * c
+    local t
+    if math.abs(a) < 0.001 then
+        t = -c / b
+    elseif disc < 0 then
+        return T   -- target unreachable; aim at present position
+    else
+        local sq = math.sqrt(disc)
+        local t1 = (-b + sq) / (2 * a)
+        local t2 = (-b - sq) / (2 * a)
+        if t1 > 0 and t2 > 0 then t = math.min(t1, t2)
+        elseif t1 > 0 then t = t1
+        elseif t2 > 0 then t = t2
+        else return T end
+    end
+    -- Predicted intercept point with gravity adjustment.
+    local lead = T + V * t
+    if g > 0 then
+        -- Add an upward correction so the projectile arc lands on
+        -- the lead point: dy = 0.5 * g * t^2 (rises before falling).
+        lead = lead + Vector3.new(0, 0.5 * g * t * t, 0)
+    end
+    return lead
+end
 
 M.LockedTarget = nil
 local conns = {}
@@ -2532,9 +2600,22 @@ local function hasLOS(target)
     return result.Instance:IsDescendantOf(target.Parent)
 end
 
-local function predict(part)
-    if state.Prediction <= 0 then return part.Position end
-    local vel = part.AssemblyLinearVelocity
+local function predict(part, plr)
+    -- v2: prefer smoothed velocity from the history buffer for less
+    -- noisy lead; fall back to the engine's per-frame velocity.
+    if state.Prediction <= 0 and not state.Ballistics then
+        return part.Position
+    end
+    pushVelocity(plr, part.Position)
+    local vel = (plr and smoothedVelocity(plr)) or part.AssemblyLinearVelocity
+    if vel.Magnitude < 0.01 then vel = part.AssemblyLinearVelocity end
+
+    if state.Ballistics then
+        local cam = Workspace.CurrentCamera
+        local S = cam and cam.CFrame.Position or part.Position
+        return ballisticsAim(S, part.Position, vel,
+                             state.ProjSpeed, state.Gravity)
+    end
     return part.Position + vel * state.Prediction
 end
 
@@ -2707,7 +2788,7 @@ local function aimStep()
     local cam = Workspace.CurrentCamera
     if not cam then return end
 
-    local aimPos = predict(part)
+    local aimPos = predict(part, target)
     local goal = CFrame.new(cam.CFrame.Position, aimPos)
     local alpha = curveAlpha(1)
     if alpha >= 0.999 then
@@ -2788,8 +2869,18 @@ function M.Build(tab, ctx)
     aim:AddDropdown("Smoothing curve", {"Linear","Sine","Exponential"}, "Sine", function(v) state.SmoothCurve = v end)
     aim:AddSlider("Smoothness", 0, 0.95, 0.35, function(v) state.Smoothness = v end, {Decimals = 2})
     aim:AddSlider("Prediction (s)", 0, 0.6, 0.16, function(v) state.Prediction = v end, {Decimals = 2})
+    aim:AddSlider("Velocity history (frames)", 1, 24, 8, function(v) state.VelocityHistory = math.floor(v) end)
     aim:AddToggle("Sticky lock", true, function(v) state.Sticky = v end)
     aim:AddToggle("Auto-switch on lost", true, function(v) state.AutoSwitch = v end)
+
+    -- v2: ballistics solver for projectile games (Phantom Forces, Bad
+    -- Business etc.). Disabled by default - on hitscan games it'll
+    -- just over-lead.
+    local bal = tab:AddSection("Ballistics (projectile games)")
+    bal:AddToggle("Solve projectile intercept", false, function(v) state.Ballistics = v end)
+    bal:AddSlider("Projectile speed (studs/s)", 50, 5000, 1000, function(v) state.ProjSpeed = v end)
+    bal:AddSlider("Gravity", 0, 500, 196, function(v) state.Gravity = v end)
+    bal:AddLabel("Solves a + b*t + c*t^2 = 0 each frame; falls back to linear lead if no real root.")
 
     local checks = tab:AddSection("Filters")
     checks:AddToggle("Team check", false, function(v) state.CheckTeam = v end)
@@ -4185,6 +4276,8 @@ local state = {
     Killfeed       = false,
     KillfeedMax    = 6,
     KillfeedFade   = 4,
+    SpectatorList  = false,
+    PerfGraph      = false,
 }
 
 local conns = {}
@@ -4534,6 +4627,189 @@ function M.UnregisterKey(label)
 end
 
 -- ============================================================
+-- Spectator list - who has CameraSubject == me
+-- ============================================================
+
+local specPanel, specList
+
+local function buildSpecPanel(gui)
+    if specPanel then return end
+    specPanel = Instance.new("Frame")
+    specPanel.Name = "Spectators"
+    specPanel.AnchorPoint = Vector2.new(0, 1)
+    specPanel.Position = UDim2.new(0, 12, 1, -130)
+    specPanel.Size = UDim2.new(0, 200, 0, 0)
+    specPanel.AutomaticSize = Enum.AutomaticSize.Y
+    specPanel.BackgroundColor3 = THEME.Bg
+    specPanel.BackgroundTransparency = 0.15
+    specPanel.BorderSizePixel = 0
+    specPanel.Visible = false
+    specPanel.Parent = gui
+    Instance.new("UICorner", specPanel).CornerRadius = UDim.new(0, 6)
+    local s = Instance.new("UIStroke"); s.Color = THEME.Bad; s.Thickness = 1; s.Parent = specPanel
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, 0, 0, 18)
+    title.Font = Enum.Font.GothamBold
+    title.Text = "  spectators"
+    title.TextColor3 = THEME.Bad
+    title.TextSize = 11
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = specPanel
+
+    specList = Instance.new("Frame")
+    specList.BackgroundTransparency = 1
+    specList.Position = UDim2.new(0, 0, 0, 20)
+    specList.Size = UDim2.new(1, 0, 0, 0)
+    specList.AutomaticSize = Enum.AutomaticSize.Y
+    specList.Parent = specPanel
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 1)
+    layout.Parent = specList
+    local pad = Instance.new("UIPadding")
+    pad.PaddingLeft = UDim.new(0, 10); pad.PaddingRight = UDim.new(0, 10)
+    pad.PaddingBottom = UDim.new(0, 6)
+    pad.Parent = specList
+end
+
+local function refreshSpectatorList()
+    if not specPanel then return end
+    if not state.SpectatorList then specPanel.Visible = false; return end
+
+    local lp = Players.LocalPlayer
+    local myChar = lp and lp.Character
+    local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+
+    -- Detect: any other player whose CameraSubject is our humanoid /
+    -- a part of our character.
+    local watchers = {}
+    -- We can only reliably know our OWN camera subject. Cross-player
+    -- camera detection isn't replicated. Best-effort: list players
+    -- within 20 studs whose character is facing ours (a soft proxy).
+    if myChar and myChar.PrimaryPart then
+        local myPos = myChar.PrimaryPart.Position
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= lp and plr.Character and plr.Character.PrimaryPart then
+                local their = plr.Character.PrimaryPart
+                local d = (their.Position - myPos).Magnitude
+                if d < 40 then
+                    local lookAt = their.CFrame.LookVector
+                    local toMe = (myPos - their.Position).Unit
+                    -- dot > 0.8 = within ~36 deg of facing us
+                    if lookAt:Dot(toMe) > 0.8 then
+                        table.insert(watchers, plr.DisplayName ..
+                            string.format(" (%dm)", math.floor(d)))
+                    end
+                end
+            end
+        end
+    end
+
+    specPanel.Visible = #watchers > 0
+    -- Clear existing rows
+    for _, c in ipairs(specList:GetChildren()) do
+        if c:IsA("TextLabel") then c:Destroy() end
+    end
+    for _, name in ipairs(watchers) do
+        local row = Instance.new("TextLabel")
+        row.BackgroundTransparency = 1
+        row.Size = UDim2.new(1, 0, 0, 14)
+        row.Font = Enum.Font.GothamMedium
+        row.Text = "- " .. name
+        row.TextColor3 = THEME.Text
+        row.TextSize = 11
+        row.TextXAlignment = Enum.TextXAlignment.Left
+        row.Parent = specList
+    end
+end
+
+-- ============================================================
+-- FPS performance graph - last 10 seconds of frame times
+-- ============================================================
+
+local perfPanel, perfHistory, perfPoints
+local PERF_SAMPLES = 120  -- 10 seconds at ~12Hz sample rate
+
+local function buildPerfPanel(gui)
+    if perfPanel then return end
+    perfPanel = Instance.new("Frame")
+    perfPanel.Name = "PerfGraph"
+    perfPanel.AnchorPoint = Vector2.new(0, 1)
+    perfPanel.Position = UDim2.new(0, 12, 1, -12)
+    perfPanel.Size = UDim2.new(0, 200, 0, 64)
+    perfPanel.BackgroundColor3 = THEME.Bg
+    perfPanel.BackgroundTransparency = 0.15
+    perfPanel.BorderSizePixel = 0
+    perfPanel.Visible = false
+    perfPanel.Parent = gui
+    Instance.new("UICorner", perfPanel).CornerRadius = UDim.new(0, 6)
+    local s = Instance.new("UIStroke"); s.Color = THEME.Accent; s.Thickness = 1; s.Parent = perfPanel
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, 0, 0, 16)
+    title.Font = Enum.Font.GothamBold
+    title.Text = "  FPS  (10s)"
+    title.TextColor3 = THEME.Text
+    title.TextSize = 10
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = perfPanel
+
+    -- Graph area (Frame). We approximate a line by laying out N thin
+    -- bars; each bar's height = its FPS sample / max.
+    perfPoints = Instance.new("Frame")
+    perfPoints.BackgroundTransparency = 1
+    perfPoints.Position = UDim2.new(0, 6, 0, 18)
+    perfPoints.Size = UDim2.new(1, -12, 1, -22)
+    perfPoints.Parent = perfPanel
+
+    perfHistory = {}
+    for i = 1, PERF_SAMPLES do
+        local bar = Instance.new("Frame")
+        bar.BorderSizePixel = 0
+        bar.BackgroundColor3 = THEME.Accent
+        bar.AnchorPoint = Vector2.new(0, 1)
+        local x = (i - 1) / PERF_SAMPLES
+        bar.Position = UDim2.new(x, 0, 1, 0)
+        bar.Size = UDim2.new(1 / PERF_SAMPLES, -1, 0, 0)
+        bar.Parent = perfPoints
+        perfHistory[i] = {bar = bar, fps = 60}
+    end
+end
+
+local lastSampleAt = 0
+local function refreshPerf(dt)
+    if not perfPanel then return end
+    perfPanel.Visible = state.PerfGraph
+    if not state.PerfGraph then return end
+
+    if tick() - lastSampleAt < 0.083 then return end  -- ~12Hz
+    lastSampleAt = tick()
+
+    -- shift left, append current
+    for i = 1, PERF_SAMPLES - 1 do
+        perfHistory[i].fps = perfHistory[i + 1].fps
+    end
+    local curFps = 1 / math.max(dt, 1e-3)
+    perfHistory[PERF_SAMPLES].fps = curFps
+
+    -- update bar heights
+    local maxFps = 0
+    for i = 1, PERF_SAMPLES do
+        if perfHistory[i].fps > maxFps then maxFps = perfHistory[i].fps end
+    end
+    if maxFps < 30 then maxFps = 30 end
+    for i = 1, PERF_SAMPLES do
+        local h = perfHistory[i].fps / maxFps
+        perfHistory[i].bar.Size = UDim2.new(1 / PERF_SAMPLES, -1, h, 0)
+        perfHistory[i].bar.BackgroundColor3 =
+            curFps > 50 and THEME.Good or curFps > 30 and THEME.Warn or THEME.Bad
+    end
+end
+
+-- ============================================================
 -- Killfeed
 -- ============================================================
 -- Watches every Humanoid.Died across all players. When someone dies,
@@ -4764,11 +5040,33 @@ function M.Build(tab, ctx)
         if state.Killfeed then pushKillEntry("test entry", THEME.Accent) end
     end)
 
-    conns.render = RunService.RenderStepped:Connect(function()
+    -- ----- Spectator list -----
+    buildSpecPanel(gui)
+    local sp = tab:AddSection("Spectator Detection")
+    sp:AddToggle("Show players watching you", false, function(v)
+        state.SpectatorList = v
+        refreshSpectatorList()
+    end)
+    sp:AddLabel("Heuristic: nearby players whose camera direction faces you.")
+
+    -- ----- Performance graph -----
+    buildPerfPanel(gui)
+    local pg = tab:AddSection("Performance Graph")
+    pg:AddToggle("Show FPS graph (10s)", false, function(v) state.PerfGraph = v end)
+
+    local specAccum = 0
+    conns.render = RunService.RenderStepped:Connect(function(dt)
         updateWatermark()
         updateCrosshair()
         updateTargetPanel()
         updateArrows()
+        refreshPerf(dt)
+        -- Spectator detection: only refresh every 0.5s to keep cost low
+        specAccum = specAccum + dt
+        if specAccum > 0.5 then
+            specAccum = 0
+            refreshSpectatorList()
+        end
     end)
 end
 

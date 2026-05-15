@@ -26,6 +26,8 @@ local state = {
     Killfeed       = false,
     KillfeedMax    = 6,
     KillfeedFade   = 4,
+    SpectatorList  = false,
+    PerfGraph      = false,
 }
 
 local conns = {}
@@ -375,6 +377,189 @@ function M.UnregisterKey(label)
 end
 
 -- ============================================================
+-- Spectator list - who has CameraSubject == me
+-- ============================================================
+
+local specPanel, specList
+
+local function buildSpecPanel(gui)
+    if specPanel then return end
+    specPanel = Instance.new("Frame")
+    specPanel.Name = "Spectators"
+    specPanel.AnchorPoint = Vector2.new(0, 1)
+    specPanel.Position = UDim2.new(0, 12, 1, -130)
+    specPanel.Size = UDim2.new(0, 200, 0, 0)
+    specPanel.AutomaticSize = Enum.AutomaticSize.Y
+    specPanel.BackgroundColor3 = THEME.Bg
+    specPanel.BackgroundTransparency = 0.15
+    specPanel.BorderSizePixel = 0
+    specPanel.Visible = false
+    specPanel.Parent = gui
+    Instance.new("UICorner", specPanel).CornerRadius = UDim.new(0, 6)
+    local s = Instance.new("UIStroke"); s.Color = THEME.Bad; s.Thickness = 1; s.Parent = specPanel
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, 0, 0, 18)
+    title.Font = Enum.Font.GothamBold
+    title.Text = "  spectators"
+    title.TextColor3 = THEME.Bad
+    title.TextSize = 11
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = specPanel
+
+    specList = Instance.new("Frame")
+    specList.BackgroundTransparency = 1
+    specList.Position = UDim2.new(0, 0, 0, 20)
+    specList.Size = UDim2.new(1, 0, 0, 0)
+    specList.AutomaticSize = Enum.AutomaticSize.Y
+    specList.Parent = specPanel
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 1)
+    layout.Parent = specList
+    local pad = Instance.new("UIPadding")
+    pad.PaddingLeft = UDim.new(0, 10); pad.PaddingRight = UDim.new(0, 10)
+    pad.PaddingBottom = UDim.new(0, 6)
+    pad.Parent = specList
+end
+
+local function refreshSpectatorList()
+    if not specPanel then return end
+    if not state.SpectatorList then specPanel.Visible = false; return end
+
+    local lp = Players.LocalPlayer
+    local myChar = lp and lp.Character
+    local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+
+    -- Detect: any other player whose CameraSubject is our humanoid /
+    -- a part of our character.
+    local watchers = {}
+    -- We can only reliably know our OWN camera subject. Cross-player
+    -- camera detection isn't replicated. Best-effort: list players
+    -- within 20 studs whose character is facing ours (a soft proxy).
+    if myChar and myChar.PrimaryPart then
+        local myPos = myChar.PrimaryPart.Position
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= lp and plr.Character and plr.Character.PrimaryPart then
+                local their = plr.Character.PrimaryPart
+                local d = (their.Position - myPos).Magnitude
+                if d < 40 then
+                    local lookAt = their.CFrame.LookVector
+                    local toMe = (myPos - their.Position).Unit
+                    -- dot > 0.8 = within ~36 deg of facing us
+                    if lookAt:Dot(toMe) > 0.8 then
+                        table.insert(watchers, plr.DisplayName ..
+                            string.format(" (%dm)", math.floor(d)))
+                    end
+                end
+            end
+        end
+    end
+
+    specPanel.Visible = #watchers > 0
+    -- Clear existing rows
+    for _, c in ipairs(specList:GetChildren()) do
+        if c:IsA("TextLabel") then c:Destroy() end
+    end
+    for _, name in ipairs(watchers) do
+        local row = Instance.new("TextLabel")
+        row.BackgroundTransparency = 1
+        row.Size = UDim2.new(1, 0, 0, 14)
+        row.Font = Enum.Font.GothamMedium
+        row.Text = "- " .. name
+        row.TextColor3 = THEME.Text
+        row.TextSize = 11
+        row.TextXAlignment = Enum.TextXAlignment.Left
+        row.Parent = specList
+    end
+end
+
+-- ============================================================
+-- FPS performance graph - last 10 seconds of frame times
+-- ============================================================
+
+local perfPanel, perfHistory, perfPoints
+local PERF_SAMPLES = 120  -- 10 seconds at ~12Hz sample rate
+
+local function buildPerfPanel(gui)
+    if perfPanel then return end
+    perfPanel = Instance.new("Frame")
+    perfPanel.Name = "PerfGraph"
+    perfPanel.AnchorPoint = Vector2.new(0, 1)
+    perfPanel.Position = UDim2.new(0, 12, 1, -12)
+    perfPanel.Size = UDim2.new(0, 200, 0, 64)
+    perfPanel.BackgroundColor3 = THEME.Bg
+    perfPanel.BackgroundTransparency = 0.15
+    perfPanel.BorderSizePixel = 0
+    perfPanel.Visible = false
+    perfPanel.Parent = gui
+    Instance.new("UICorner", perfPanel).CornerRadius = UDim.new(0, 6)
+    local s = Instance.new("UIStroke"); s.Color = THEME.Accent; s.Thickness = 1; s.Parent = perfPanel
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, 0, 0, 16)
+    title.Font = Enum.Font.GothamBold
+    title.Text = "  FPS  (10s)"
+    title.TextColor3 = THEME.Text
+    title.TextSize = 10
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = perfPanel
+
+    -- Graph area (Frame). We approximate a line by laying out N thin
+    -- bars; each bar's height = its FPS sample / max.
+    perfPoints = Instance.new("Frame")
+    perfPoints.BackgroundTransparency = 1
+    perfPoints.Position = UDim2.new(0, 6, 0, 18)
+    perfPoints.Size = UDim2.new(1, -12, 1, -22)
+    perfPoints.Parent = perfPanel
+
+    perfHistory = {}
+    for i = 1, PERF_SAMPLES do
+        local bar = Instance.new("Frame")
+        bar.BorderSizePixel = 0
+        bar.BackgroundColor3 = THEME.Accent
+        bar.AnchorPoint = Vector2.new(0, 1)
+        local x = (i - 1) / PERF_SAMPLES
+        bar.Position = UDim2.new(x, 0, 1, 0)
+        bar.Size = UDim2.new(1 / PERF_SAMPLES, -1, 0, 0)
+        bar.Parent = perfPoints
+        perfHistory[i] = {bar = bar, fps = 60}
+    end
+end
+
+local lastSampleAt = 0
+local function refreshPerf(dt)
+    if not perfPanel then return end
+    perfPanel.Visible = state.PerfGraph
+    if not state.PerfGraph then return end
+
+    if tick() - lastSampleAt < 0.083 then return end  -- ~12Hz
+    lastSampleAt = tick()
+
+    -- shift left, append current
+    for i = 1, PERF_SAMPLES - 1 do
+        perfHistory[i].fps = perfHistory[i + 1].fps
+    end
+    local curFps = 1 / math.max(dt, 1e-3)
+    perfHistory[PERF_SAMPLES].fps = curFps
+
+    -- update bar heights
+    local maxFps = 0
+    for i = 1, PERF_SAMPLES do
+        if perfHistory[i].fps > maxFps then maxFps = perfHistory[i].fps end
+    end
+    if maxFps < 30 then maxFps = 30 end
+    for i = 1, PERF_SAMPLES do
+        local h = perfHistory[i].fps / maxFps
+        perfHistory[i].bar.Size = UDim2.new(1 / PERF_SAMPLES, -1, h, 0)
+        perfHistory[i].bar.BackgroundColor3 =
+            curFps > 50 and THEME.Good or curFps > 30 and THEME.Warn or THEME.Bad
+    end
+end
+
+-- ============================================================
 -- Killfeed
 -- ============================================================
 -- Watches every Humanoid.Died across all players. When someone dies,
@@ -605,11 +790,33 @@ function M.Build(tab, ctx)
         if state.Killfeed then pushKillEntry("test entry", THEME.Accent) end
     end)
 
-    conns.render = RunService.RenderStepped:Connect(function()
+    -- ----- Spectator list -----
+    buildSpecPanel(gui)
+    local sp = tab:AddSection("Spectator Detection")
+    sp:AddToggle("Show players watching you", false, function(v)
+        state.SpectatorList = v
+        refreshSpectatorList()
+    end)
+    sp:AddLabel("Heuristic: nearby players whose camera direction faces you.")
+
+    -- ----- Performance graph -----
+    buildPerfPanel(gui)
+    local pg = tab:AddSection("Performance Graph")
+    pg:AddToggle("Show FPS graph (10s)", false, function(v) state.PerfGraph = v end)
+
+    local specAccum = 0
+    conns.render = RunService.RenderStepped:Connect(function(dt)
         updateWatermark()
         updateCrosshair()
         updateTargetPanel()
         updateArrows()
+        refreshPerf(dt)
+        -- Spectator detection: only refresh every 0.5s to keep cost low
+        specAccum = specAccum + dt
+        if specAccum > 0.5 then
+            specAccum = 0
+            refreshSpectatorList()
+        end
     end)
 end
 

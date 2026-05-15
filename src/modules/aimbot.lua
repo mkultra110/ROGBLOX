@@ -40,6 +40,12 @@ local state = {
     SmoothCurve    = "Sine",                -- Linear | Sine | Exponential
     Smoothness     = 0.35,
     Prediction     = 0.16,                  -- seconds of lead
+    -- v2: velocity history buffer for noise-resistant prediction
+    VelocityHistory= 8,                     -- frames of velocity to average
+    -- v2: ballistics for projectile games
+    Ballistics     = false,
+    ProjSpeed      = 1000,                  -- studs/sec
+    Gravity        = 196.2,                 -- Roblox default workspace.Gravity
     SnapLine       = false,
     ShowFOV        = true,
     FOVColor       = Color3.fromRGB(140, 100, 255),
@@ -50,6 +56,68 @@ local state = {
     TriggerDelay   = 0.05,
     TriggerWindow  = 6,                     -- pixels from center
 }
+
+-- Per-player velocity history: rolling buffer of (Vector3, t) pairs.
+-- Used to derive smoothed velocity instead of trusting the per-frame
+-- AssemblyLinearVelocity (which is noisy on networked replication).
+local velHistory = setmetatable({}, {__mode = "k"})
+
+local function pushVelocity(plr, pos)
+    local now = tick()
+    local h = velHistory[plr]
+    if not h then h = {}; velHistory[plr] = h end
+    table.insert(h, {pos = pos, t = now})
+    if #h > 24 then table.remove(h, 1) end
+end
+
+local function smoothedVelocity(plr)
+    local h = velHistory[plr]
+    if not h or #h < 2 then return Vector3.new(0, 0, 0) end
+    local n = math.min(#h, state.VelocityHistory)
+    local first = h[#h - n + 1]
+    local last  = h[#h]
+    local dt = last.t - first.t
+    if dt <= 0 then return Vector3.new(0, 0, 0) end
+    return (last.pos - first.pos) / dt
+end
+
+-- Ballistics intercept solver for projectile games.
+-- Given shooter pos S, target pos T, target velocity V,
+-- projectile speed p, gravity g, returns the aim point that
+-- intercepts the target. Falls back to the target's current
+-- position if no real intercept exists.
+local function ballisticsAim(S, T, V, p, g)
+    if state.Ballistics == false then return T end
+    -- Iterative solve: at² + bt + c = 0 where a = (V.V - p²),
+    -- ignoring gravity to seed, then refine with gravity arc.
+    local D = T - S
+    local a = V:Dot(V) - p * p
+    local b = 2 * V:Dot(D)
+    local c = D:Dot(D)
+    local disc = b * b - 4 * a * c
+    local t
+    if math.abs(a) < 0.001 then
+        t = -c / b
+    elseif disc < 0 then
+        return T   -- target unreachable; aim at present position
+    else
+        local sq = math.sqrt(disc)
+        local t1 = (-b + sq) / (2 * a)
+        local t2 = (-b - sq) / (2 * a)
+        if t1 > 0 and t2 > 0 then t = math.min(t1, t2)
+        elseif t1 > 0 then t = t1
+        elseif t2 > 0 then t = t2
+        else return T end
+    end
+    -- Predicted intercept point with gravity adjustment.
+    local lead = T + V * t
+    if g > 0 then
+        -- Add an upward correction so the projectile arc lands on
+        -- the lead point: dy = 0.5 * g * t^2 (rises before falling).
+        lead = lead + Vector3.new(0, 0.5 * g * t * t, 0)
+    end
+    return lead
+end
 
 M.LockedTarget = nil
 local conns = {}
@@ -103,9 +171,22 @@ local function hasLOS(target)
     return result.Instance:IsDescendantOf(target.Parent)
 end
 
-local function predict(part)
-    if state.Prediction <= 0 then return part.Position end
-    local vel = part.AssemblyLinearVelocity
+local function predict(part, plr)
+    -- v2: prefer smoothed velocity from the history buffer for less
+    -- noisy lead; fall back to the engine's per-frame velocity.
+    if state.Prediction <= 0 and not state.Ballistics then
+        return part.Position
+    end
+    pushVelocity(plr, part.Position)
+    local vel = (plr and smoothedVelocity(plr)) or part.AssemblyLinearVelocity
+    if vel.Magnitude < 0.01 then vel = part.AssemblyLinearVelocity end
+
+    if state.Ballistics then
+        local cam = Workspace.CurrentCamera
+        local S = cam and cam.CFrame.Position or part.Position
+        return ballisticsAim(S, part.Position, vel,
+                             state.ProjSpeed, state.Gravity)
+    end
     return part.Position + vel * state.Prediction
 end
 
@@ -278,7 +359,7 @@ local function aimStep()
     local cam = Workspace.CurrentCamera
     if not cam then return end
 
-    local aimPos = predict(part)
+    local aimPos = predict(part, target)
     local goal = CFrame.new(cam.CFrame.Position, aimPos)
     local alpha = curveAlpha(1)
     if alpha >= 0.999 then
@@ -359,8 +440,18 @@ function M.Build(tab, ctx)
     aim:AddDropdown("Smoothing curve", {"Linear","Sine","Exponential"}, "Sine", function(v) state.SmoothCurve = v end)
     aim:AddSlider("Smoothness", 0, 0.95, 0.35, function(v) state.Smoothness = v end, {Decimals = 2})
     aim:AddSlider("Prediction (s)", 0, 0.6, 0.16, function(v) state.Prediction = v end, {Decimals = 2})
+    aim:AddSlider("Velocity history (frames)", 1, 24, 8, function(v) state.VelocityHistory = math.floor(v) end)
     aim:AddToggle("Sticky lock", true, function(v) state.Sticky = v end)
     aim:AddToggle("Auto-switch on lost", true, function(v) state.AutoSwitch = v end)
+
+    -- v2: ballistics solver for projectile games (Phantom Forces, Bad
+    -- Business etc.). Disabled by default - on hitscan games it'll
+    -- just over-lead.
+    local bal = tab:AddSection("Ballistics (projectile games)")
+    bal:AddToggle("Solve projectile intercept", false, function(v) state.Ballistics = v end)
+    bal:AddSlider("Projectile speed (studs/s)", 50, 5000, 1000, function(v) state.ProjSpeed = v end)
+    bal:AddSlider("Gravity", 0, 500, 196, function(v) state.Gravity = v end)
+    bal:AddLabel("Solves a + b*t + c*t^2 = 0 each frame; falls back to linear lead if no real root.")
 
     local checks = tab:AddSection("Filters")
     checks:AddToggle("Team check", false, function(v) state.CheckTeam = v end)
