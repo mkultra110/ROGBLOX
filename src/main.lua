@@ -1,15 +1,14 @@
 --[[
-    ROGBLOX — main entry point
-    Fetches each module from the repo, wires them together,
-    builds the UI, and exposes _G.ROGBLOX for runtime control.
+    ROGBLOX — main entry point.
+    Fetches each module from the repo, builds the UI, wires modules,
+    and exposes _G.ROGBLOX for runtime control.
 ]]
 
 local BRANCH = "main"
 local BASE = "https://raw.githubusercontent.com/mkultra110/rogblox/" .. BRANCH .. "/"
 
 local function fetch(path)
-    local url = BASE .. path
-    local source = game:HttpGet(url)
+    local source = game:HttpGet(BASE .. path)
     local chunk, err = loadstring(source, "@" .. path)
     if not chunk then
         error("ROGBLOX load failed for " .. path .. ": " .. tostring(err))
@@ -32,14 +31,15 @@ local ESP      = fetch("src/modules/esp.lua")
 local Combat   = fetch("src/modules/combat_extras.lua")
 local Movement = fetch("src/modules/movement.lua")
 local Teleport = fetch("src/modules/teleport.lua")
+local HUD      = fetch("src/modules/hud.lua")
 local World    = fetch("src/modules/world.lua")
 local Farm     = fetch("src/modules/autofarm.lua")
 local Misc     = fetch("src/modules/misc.lua")
 
 local Window = UI:CreateWindow({
     Title    = "ROGBLOX",
-    SubTitle = "v0.2.0  ⚡  for LO",
-    Size     = Vector2.new(620, 400),
+    SubTitle = "v0.3.0  pro",
+    Size     = Vector2.new(680, 460),
     Toggle   = Enum.KeyCode.RightControl,
 })
 
@@ -50,16 +50,19 @@ local ctx = {
     Config   = Config,
     Players  = PlayersUtil,
     Drawing  = Drawing,
+    Aimbot   = Aimbot,
 }
 
-Aimbot.Build(  Window:AddTab("Aimbot"),   ctx)
-ESP.Build(     Window:AddTab("Visuals"),  ctx)
-Combat.Build(  Window:AddTab("Combat+"),  ctx)
-Movement.Build(Window:AddTab("Movement"), ctx)
-Teleport.Build(Window:AddTab("Teleport"), ctx)
-World.Build(   Window:AddTab("World"),    ctx)
-Farm.Build(    Window:AddTab("Auto"),     ctx)
-Misc.Build(    Window:AddTab("Misc"),     ctx)
+-- Aimbot first so HUD can read its LockedTarget through ctx.
+Aimbot.Build(  Window:AddTab("Aimbot"),    ctx)
+HUD.Build(     Window:AddTab("HUD"),       ctx)
+ESP.Build(     Window:AddTab("Visuals"),   ctx)
+Combat.Build(  Window:AddTab("Combat+"),   ctx)
+Movement.Build(Window:AddTab("Movement"),  ctx)
+Teleport.Build(Window:AddTab("Teleport"),  ctx)
+World.Build(   Window:AddTab("World"),     ctx)
+Farm.Build(    Window:AddTab("Auto"),      ctx)
+Misc.Build(    Window:AddTab("Misc"),      ctx)
 
 local SettingsTab = Window:AddTab("Settings")
 local cfgSection = SettingsTab:AddSection("Config")
@@ -76,16 +79,18 @@ cfgSection:AddButton("Reset", function()
     Notify:Send("Config", "Reset to defaults", 3)
 end)
 
+local themeSection = SettingsTab:AddSection("Theme")
+themeSection:AddColorPicker("Accent color", UI.Theme.Accent, function(c) Window:SetAccent(c) end)
+
 local infoSection = SettingsTab:AddSection("About")
-infoSection:AddLabel("ROGBLOX — Roblox cheat hub")
+infoSection:AddLabel("ROGBLOX — pro Roblox cheat hub")
 infoSection:AddLabel("Branch: " .. BRANCH)
 infoSection:AddLabel("PlaceId: " .. tostring(game.PlaceId))
 infoSection:AddLabel("JobId: " .. tostring(game.JobId))
 infoSection:AddLabel("Press RightCtrl to toggle UI")
 
--- public API
 _G.ROGBLOX = {
-    Version = "0.2.0",
+    Version = "0.3.0",
     UI      = UI,
     Window  = Window,
     Notify  = Notify,
@@ -95,12 +100,13 @@ _G.ROGBLOX = {
         Combat   = Combat,
         Movement = Movement,
         Teleport = Teleport,
+        HUD      = HUD,
         World    = World,
         Farm     = Farm,
         Misc     = Misc,
     },
     Unload = function()
-        for _, mod in pairs({Aimbot, ESP, Combat, Movement, Teleport, World, Farm, Misc}) do
+        for _, mod in pairs({Aimbot, ESP, Combat, Movement, Teleport, HUD, World, Farm, Misc}) do
             if mod.Unload then pcall(mod.Unload) end
         end
         Window:Destroy()
@@ -109,5 +115,5 @@ _G.ROGBLOX = {
     end,
 }
 
-Notify:Send("ROGBLOX", "Loaded — press RightCtrl to toggle UI", 4)
+Notify:Send("ROGBLOX", "v0.3.0 loaded — press RightCtrl to toggle UI", 4)
 pcall(Config.Load)

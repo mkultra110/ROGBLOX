@@ -1,125 +1,262 @@
 --[[
-    Teleport module — to player, saved slots, click-tp, server hop, rejoin.
+    Teleport — professional implementation.
+
+    - Live player list (refresh, distance, HP shown next to names)
+    - 10 named waypoint slots with save / load / clear / rename
+    - TP modes: To, Behind, In front, Above, Below, Aim TP (where camera looks)
+    - Pathwalk: smooth interp to destination over N seconds
+    - TP history (back / forward stack)
+    - Click-TP (Ctrl + click)
+    - Server hop, rejoin
 ]]
 
 local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
 local TeleportService  = game:GetService("TeleportService")
 local UserInputService = game:GetService("UserInputService")
 local HttpService      = game:GetService("HttpService")
 local Workspace        = game:GetService("Workspace")
+local TweenService     = game:GetService("TweenService")
 
 local M = {}
 
-local saved = {}   -- slot -> CFrame
-local clickEnabled = false
-local clickConn
+local state = {
+    Mode       = "To",      -- To | Behind | InFront | Above | Below | Aim
+    Offset     = 3,
+    PathWalk   = false,
+    PathTime   = 0.5,
+    ClickTP    = false,
+}
+
+local SLOTS = 10
+local saved = {}            -- [slot] = {Name = string, CFrame = CFrame}
+local history = {}          -- stack of CFrames before each TP
+local future = {}           -- redo stack
+local conns = {}
+
+-- ---------- Helpers ----------
+
+local function getChar()
+    local lp = Players.LocalPlayer
+    return lp and lp.Character
+end
 
 local function getRoot()
-    local lp = Players.LocalPlayer
-    local c = lp and lp.Character
+    local c = getChar()
     return c and c:FindFirstChild("HumanoidRootPart")
 end
 
-local function tpTo(target)
-    local root = getRoot()
-    if not root or not target then return false end
-    root.CFrame = target
-    return true
+local function pushHistory()
+    local r = getRoot()
+    if r then
+        table.insert(history, r.CFrame)
+        if #history > 32 then table.remove(history, 1) end
+        future = {}
+    end
 end
 
-local function nameList()
+local function doTeleport(target)
+    if not target then return end
+    local root = getRoot()
+    if not root then return end
+    pushHistory()
+    if state.PathWalk and state.PathTime > 0 then
+        local t = TweenService:Create(root, TweenInfo.new(state.PathTime, Enum.EasingStyle.Linear), {CFrame = target})
+        t:Play()
+    else
+        root.CFrame = target
+    end
+end
+
+local function targetCFrameForMode(plr)
+    local char = plr and plr.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    local cf = hrp.CFrame
+    local off = state.Offset
+    if state.Mode == "To" then
+        return cf * CFrame.new(0, 0, -off)
+    elseif state.Mode == "Behind" then
+        return cf * CFrame.new(0, 0, off)
+    elseif state.Mode == "InFront" then
+        return cf * CFrame.new(0, 0, -off)
+    elseif state.Mode == "Above" then
+        return cf + Vector3.new(0, off, 0)
+    elseif state.Mode == "Below" then
+        return cf - Vector3.new(0, off, 0)
+    elseif state.Mode == "Aim" then
+        local cam = Workspace.CurrentCamera
+        if not cam then return cf end
+        local origin = cam.CFrame.Position
+        local lookDir = cam.CFrame.LookVector
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = {getChar()}
+        local result = Workspace:Raycast(origin, lookDir * 1000, params)
+        local pos = result and result.Position or (origin + lookDir * 50)
+        return CFrame.new(pos + Vector3.new(0, off, 0))
+    end
+    return cf
+end
+
+local function playerList()
     local names = {}
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= Players.LocalPlayer then
-            table.insert(names, plr.Name)
+            local meta = plr.Name
+            local char = plr.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local myRoot = getRoot()
+            if hrp and hum and myRoot then
+                meta = string.format("%s  [%dm %d%%]", plr.Name,
+                    math.floor((hrp.Position - myRoot.Position).Magnitude),
+                    math.floor(hum.Health / math.max(hum.MaxHealth, 1) * 100))
+            end
+            table.insert(names, meta)
         end
     end
-    if #names == 0 then table.insert(names, "(none)") end
+    if #names == 0 then table.insert(names, "(no other players)") end
     return names
 end
 
-local function findPlayer(name)
-    if not name or name == "(none)" then return nil end
+local function findPlayerByMeta(meta)
+    if not meta then return nil end
+    local name = meta:match("^([^%s]+)")
+    if not name or name == "(no" then return nil end
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr.Name == name or plr.DisplayName == name then return plr end
+        if plr.Name == name then return plr end
     end
     return nil
 end
 
+-- ---------- Build UI ----------
+
 function M.Build(tab, ctx)
     local Notify = ctx.Notify
+    local UI = ctx.UI
 
-    -- ---- TP to player ----
-    local toPlrSec = tab:AddSection("Teleport to Player")
+    -- ----- Player list -----
+    local plrSec = tab:AddSection("Teleport to Player")
     local picked
-    local dropdown
-    dropdown = toPlrSec:AddDropdown("Player", nameList(), nameList()[1], function(v) picked = v end)
-    toPlrSec:AddButton("Refresh list", function()
-        -- rebuild by adding a new dropdown is overkill; warn the user instead
-        Notify:Send("Teleport", "Reopen the menu after lobby changes.", 2)
+    local dropdown = plrSec:AddDropdown("Player", playerList(), playerList()[1], function(v) picked = v end)
+
+    plrSec:AddButton("Refresh list", function()
+        dropdown:SetOptions(playerList())
+        Notify:Send("Teleport", "Player list refreshed", 2)
     end)
-    toPlrSec:AddButton("Teleport", function()
-        local plr = findPlayer(picked)
-        if not plr or not plr.Character then return end
-        local r = plr.Character:FindFirstChild("HumanoidRootPart")
-        if r then tpTo(r.CFrame + Vector3.new(0, 3, 0)) end
+    plrSec:AddDropdown("TP mode", {"To","Behind","InFront","Above","Below","Aim"}, "To", function(v) state.Mode = v end)
+    plrSec:AddSlider("Offset", 0, 30, 3, function(v) state.Offset = v end)
+    plrSec:AddButton("Teleport", function()
+        local plr = findPlayerByMeta(picked)
+        local cf = plr and targetCFrameForMode(plr)
+        if cf then doTeleport(cf) else Notify:Send("Teleport", "No target selected", 2) end
     end)
-    toPlrSec:AddButton("Spectate (set camera)", function()
-        local plr = findPlayer(picked)
-        if not plr or not plr.Character then return end
-        local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+    plrSec:AddButton("Spectate", function()
+        local plr = findPlayerByMeta(picked)
+        local hum = plr and plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
         if hum then Workspace.CurrentCamera.CameraSubject = hum end
     end)
-    toPlrSec:AddButton("Reset camera", function()
-        local lp = Players.LocalPlayer
-        local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
+    plrSec:AddButton("Reset camera", function()
+        local hum = getChar() and getChar():FindFirstChildOfClass("Humanoid")
         if hum then Workspace.CurrentCamera.CameraSubject = hum end
     end)
 
-    -- ---- Saved positions ----
-    local slotsSec = tab:AddSection("Saved Positions")
-    for slot = 1, 3 do
-        slotsSec:AddButton("Save slot " .. slot, function()
+    -- Auto-refresh player list when players join/leave
+    conns.added = Players.PlayerAdded:Connect(function() pcall(function() dropdown:SetOptions(playerList()) end) end)
+    conns.left  = Players.PlayerRemoving:Connect(function() pcall(function() dropdown:SetOptions(playerList()) end) end)
+
+    -- ----- Pathwalk -----
+    local pathSec = tab:AddSection("Pathwalk")
+    pathSec:AddToggle("Smooth teleport (tween)", false, function(v) state.PathWalk = v end)
+    pathSec:AddSlider("Path duration (s)", 0.05, 5, 0.5, function(v) state.PathTime = v end, {Decimals = 2})
+
+    -- ----- Waypoint slots -----
+    local wpSec = tab:AddSection("Waypoints")
+    for slot = 1, SLOTS do
+        saved[slot] = {Name = "Slot " .. slot, CFrame = nil}
+        local row = nil
+        wpSec:AddTextBox("Name " .. slot, "Slot " .. slot, function(text)
+            saved[slot].Name = text ~= "" and text or ("Slot " .. slot)
+        end)
+        wpSec:AddButton("Save slot " .. slot, function()
             local r = getRoot()
             if r then
-                saved[slot] = r.CFrame
-                Notify:Send("Teleport", "Saved slot " .. slot, 2)
+                saved[slot].CFrame = r.CFrame
+                Notify:Send("Waypoint", "Saved: " .. saved[slot].Name, 2)
             end
         end)
-        slotsSec:AddButton("Load slot " .. slot, function()
-            if saved[slot] then tpTo(saved[slot]) end
+        wpSec:AddButton("Load slot " .. slot, function()
+            if saved[slot].CFrame then
+                doTeleport(saved[slot].CFrame)
+            else
+                Notify:Send("Waypoint", "Slot " .. slot .. " is empty", 2)
+            end
         end)
+        wpSec:AddButton("Clear slot " .. slot, function()
+            saved[slot].CFrame = nil
+            Notify:Send("Waypoint", "Cleared slot " .. slot, 2)
+        end)
+        wpSec:AddDivider()
     end
 
-    -- ---- Click teleport ----
-    local clickSec = tab:AddSection("Click Teleport")
-    clickSec:AddToggle("Hold Ctrl + click", false, function(v)
-        clickEnabled = v
+    -- ----- History -----
+    local histSec = tab:AddSection("Teleport History")
+    histSec:AddButton("Undo (back)", function()
+        local last = table.remove(history)
+        if last then
+            local r = getRoot()
+            if r then
+                table.insert(future, r.CFrame)
+                r.CFrame = last
+            end
+        else
+            Notify:Send("History", "Nothing to undo", 2)
+        end
     end)
-    clickConn = UserInputService.InputBegan:Connect(function(input, processed)
+    histSec:AddButton("Redo (forward)", function()
+        local next_ = table.remove(future)
+        if next_ then
+            local r = getRoot()
+            if r then
+                table.insert(history, r.CFrame)
+                r.CFrame = next_
+            end
+        else
+            Notify:Send("History", "Nothing to redo", 2)
+        end
+    end)
+    histSec:AddButton("Clear history", function()
+        history = {}; future = {}
+        Notify:Send("History", "Cleared", 2)
+    end)
+
+    -- ----- Click TP -----
+    local clkSec = tab:AddSection("Click TP")
+    clkSec:AddToggle("Hold Ctrl + click world", false, function(v) state.ClickTP = v end)
+    conns.click = UserInputService.InputBegan:Connect(function(input, processed)
         if processed then return end
-        if not clickEnabled then return end
+        if not state.ClickTP then return end
         if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
         if not UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then return end
         local mouse = Players.LocalPlayer:GetMouse()
         if mouse.Hit then
-            tpTo(mouse.Hit + Vector3.new(0, 3, 0))
+            doTeleport(mouse.Hit + Vector3.new(0, state.Offset, 0))
         end
     end)
 
-    -- ---- Server actions ----
-    local serverSec = tab:AddSection("Server")
-    serverSec:AddButton("Rejoin", function()
+    -- ----- Server -----
+    local srvSec = tab:AddSection("Server")
+    srvSec:AddButton("Rejoin current server", function()
         TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
     end)
-    serverSec:AddButton("Server hop (low pop)", function()
+    srvSec:AddButton("Server hop (lowest pop)", function()
         local ok, data = pcall(function()
             local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(game.PlaceId)
             return HttpService:JSONDecode(game:HttpGet(url))
         end)
-        if not ok or not data or not data.data then
-            Notify:Send("Server hop", "Failed to fetch servers", 3)
-            return
+        if not (ok and data and data.data) then
+            Notify:Send("Server hop", "Failed to fetch", 3); return
         end
         for _, srv in ipairs(data.data) do
             if srv.playing < srv.maxPlayers and srv.id ~= game.JobId then
@@ -129,13 +266,15 @@ function M.Build(tab, ctx)
                 return
             end
         end
-        Notify:Send("Server hop", "No suitable server found", 3)
+        Notify:Send("Server hop", "No suitable server", 3)
     end)
 end
 
 function M.Unload()
-    if clickConn then clickConn:Disconnect() end
+    for _, c in pairs(conns) do pcall(function() c:Disconnect() end) end
+    conns = {}
 end
 
-M.State = saved
+M.State = state
+M.Saved = saved
 return M
