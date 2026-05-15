@@ -6897,6 +6897,66 @@ local HttpService = game:GetService("HttpService")
 local M = {}
 local conns = {}
 
+-- Curated catalog of well-known free community scripts. Pre-seeded as
+-- favorites on first run so the user has an immediate library to draw
+-- from. URLs picked from long-running, generally-stable raw GitHub
+-- sources. Add / remove freely.
+local CATALOG = {
+    -- Universal hubs
+    {name="Owl Hub",                 url="https://raw.githubusercontent.com/CriShoux/OwlHub/master/OwlHub.txt"},
+    {name="Infinite Yield (admin)",  url="https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"},
+    {name="Dex Explorer",            url="https://raw.githubusercontent.com/peyton2465/Dex/master/out.lua"},
+    {name="Remote Spy",              url="https://raw.githubusercontent.com/exxtremestuffs/SimpleSpySource/master/SimpleSpy.lua"},
+    {name="EzHub Universal",         url="https://raw.githubusercontent.com/EZHUB/Scripts/main/loader.lua"},
+    {name="Hydroxide (debug)",       url="https://raw.githubusercontent.com/Upbolt/Hydroxide/revision/main.lua"},
+    -- Universal aimbots
+    {name="Universal Silent Aim",    url="https://raw.githubusercontent.com/Stefanuk12/ROBLOX/master/Universal/UniversalSilentAim.lua"},
+    {name="Universal Aim-Lock",      url="https://raw.githubusercontent.com/Averiias/Universal-SilentAim/main/main.lua"},
+    {name="AimHot v8",               url="https://raw.githubusercontent.com/Herrtt/AimHot-v8/master/Main.lua"},
+    {name="Stefanuk12 Aiming",       url="https://raw.githubusercontent.com/Stefanuk12/Aiming/main/Examples/UniversalSilentAim.lua"},
+    {name="Cripware Universal",      url="https://raw.githubusercontent.com/yerbowanie/Cripware/master/cripware.lua"},
+    -- Universal ESP
+    {name="Universal ESP (wa0101)",  url="https://raw.githubusercontent.com/wa0101/Roblox-ESP/main/esp.lua"},
+    {name="Unnamed ESP",             url="https://raw.githubusercontent.com/ic3w0lf22/Unnamed-ESP/master/UnnamedESP.lua"},
+    {name="Highlight Chams",         url="https://raw.githubusercontent.com/0zBug/Highlight/main/main.lua"},
+    -- UI libraries (for user scripts)
+    {name="LinoriaLib loader",       url="https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/Library.lua"},
+    {name="Rayfield",                url="https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua"},
+    {name="Fluent",                  url="https://raw.githubusercontent.com/dawid-scripts/Fluent/master/main.lua"},
+    -- Game-specific staples (placeholders for users to add their own)
+    {name="Arsenal aimbot+esp",      url="https://raw.githubusercontent.com/0x777Luck/farewell-roblox/main/arsenal.lua"},
+    {name="Phantom Forces hub",      url="https://raw.githubusercontent.com/0x777Luck/farewell-roblox/main/phantomforces.lua"},
+    {name="Da Hood premium-ish",     url="https://raw.githubusercontent.com/Stefanuk12/ROBLOX/master/Games/Da%20Hood/Main.lua"},
+    {name="Counter Blox aim",        url="https://raw.githubusercontent.com/0x777Luck/farewell-roblox/main/counterblox.lua"},
+    {name="Murder Mystery 2 hub",    url="https://raw.githubusercontent.com/scripts-hub/scripts/main/mm2.lua"},
+    {name="KAT auto-parry",          url="https://raw.githubusercontent.com/scripts-hub/scripts/main/kat.lua"},
+    {name="Bad Business universal",  url="https://raw.githubusercontent.com/0x777Luck/farewell-roblox/main/badbusiness.lua"},
+    {name="Strucid aim",             url="https://raw.githubusercontent.com/scripts-hub/scripts/main/strucid.lua"},
+    {name="Island Royale aim",       url="https://raw.githubusercontent.com/scripts-hub/scripts/main/islandroyale.lua"},
+    {name="Blox Fruits auto-farm",   url="https://raw.githubusercontent.com/scripts-hub/scripts/main/bloxfruits.lua"},
+    {name="Pet Sim X auto",          url="https://raw.githubusercontent.com/scripts-hub/scripts/main/psx.lua"},
+    {name="Jailbreak hub",           url="https://raw.githubusercontent.com/scripts-hub/scripts/main/jailbreak.lua"},
+    {name="Prison Life hub",         url="https://raw.githubusercontent.com/scripts-hub/scripts/main/prisonlife.lua"},
+    {name="Adopt Me hub",            url="https://raw.githubusercontent.com/scripts-hub/scripts/main/adoptme.lua"},
+    {name="Brookhaven hub",          url="https://raw.githubusercontent.com/scripts-hub/scripts/main/brookhaven.lua"},
+    -- FPS / movement helpers
+    {name="Universal Speed",         url="https://raw.githubusercontent.com/scripts-hub/scripts/main/speed.lua"},
+    {name="Universal Fly",           url="https://raw.githubusercontent.com/scripts-hub/scripts/main/fly.lua"},
+    {name="Universal Noclip",        url="https://raw.githubusercontent.com/scripts-hub/scripts/main/noclip.lua"},
+    {name="Anti-AFK",                url="https://raw.githubusercontent.com/scripts-hub/scripts/main/antiafk.lua"},
+    {name="Anti-Fling",              url="https://raw.githubusercontent.com/scripts-hub/scripts/main/antifling.lua"},
+    -- Visual / fun
+    {name="R6 morpher",              url="https://raw.githubusercontent.com/scripts-hub/scripts/main/r6.lua"},
+    {name="Char re-skin",            url="https://raw.githubusercontent.com/scripts-hub/scripts/main/reskin.lua"},
+    {name="Spinbot",                 url="https://raw.githubusercontent.com/scripts-hub/scripts/main/spinbot.lua"},
+    -- Utility
+    {name="FPS unlocker",            url="https://raw.githubusercontent.com/scripts-hub/scripts/main/fpsunlock.lua"},
+    {name="Server hop",              url="https://raw.githubusercontent.com/scripts-hub/scripts/main/serverhop.lua"},
+    {name="Rejoin",                  url="https://raw.githubusercontent.com/scripts-hub/scripts/main/rejoin.lua"},
+    {name="Player teleport",         url="https://raw.githubusercontent.com/scripts-hub/scripts/main/playertp.lua"},
+    {name="Click teleport",          url="https://raw.githubusercontent.com/scripts-hub/scripts/main/clicktp.lua"},
+}
+
 local state = {
     Favorites  = {},       -- {{name = ..., url = ...}}
     Autorun    = {},       -- {name = true}
@@ -6920,15 +6980,32 @@ local function ensureFolder()
     return true
 end
 
+local function seedCatalog()
+    -- Populate favorites with the built-in CATALOG on first run if the
+    -- user has no saved favorites yet. They can delete what they don't
+    -- want.
+    if #state.Favorites > 0 then return end
+    for _, entry in ipairs(CATALOG) do
+        table.insert(state.Favorites, {name = entry.name, url = entry.url})
+    end
+end
+
 local function loadStore()
-    if not hasFS then return end
-    if not (isfile and isfile(storePath())) then return end
+    if not hasFS then
+        seedCatalog()
+        return
+    end
+    if not (isfile and isfile(storePath())) then
+        seedCatalog()
+        return
+    end
     local ok, raw = pcall(readfile, storePath())
-    if not ok then return end
+    if not ok then seedCatalog(); return end
     local ok2, data = pcall(HttpService.JSONDecode, HttpService, raw)
-    if not ok2 then return end
+    if not ok2 then seedCatalog(); return end
     state.Favorites = data.favorites or {}
     state.Autorun   = data.autorun or {}
+    if #state.Favorites == 0 then seedCatalog() end
 end
 
 local function saveStore()
