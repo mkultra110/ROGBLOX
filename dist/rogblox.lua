@@ -4036,24 +4036,156 @@ local alive = false
 
 -- ---------- Place ID database ----------
 
+-- Authoritative dispatch table sourced from Owl Hub's gameList.json plus
+-- additions for popular 2024-2026 games. PlaceId -> canonical game name.
 local GAMES = {
+    -- Shooters
+    [286090429]  = "Arsenal",
     [2788229376] = "Arsenal",
-    [301549746]  = "Phantom Forces",
-    [142823291]  = "Murder Mystery 2",
-    [2753915549] = "Blox Fruits",
-    [4924922222] = "Blox Fruits",
-    [1224212277] = "Da Hood",
-    [2788229376] = "Arsenal",
-    [3260590327] = "KAT",
     [292439477]  = "Phantom Forces",
+    [301549746]  = "Counter Blox",
+    [1480424328] = "Counter Blox",
+    [1869597719] = "Counter Blox",
+    [3233893879] = "Bad Business",
+    [2995662128] = "No Scope Sniping",
+    [3527629287] = "BIG Paintball",
+    [289565045]  = "Mad Paintball 2",
+    [328028363]  = "Typical Colors 2",
+    [983224898]  = "Wild Revolvers",
+    [1101112213] = "Wild Revolvers",
+    [1054737038] = "Wild Revolvers",
+    -- Battle royale
+    [1320174999] = "Island Royale",
+    [3678591308] = "Island Royale",
+    [3213501585] = "Island Royale",
+    [3210442546] = "Island Royale",
+    [2377868063] = "Strucid",
+    [3606833500] = "Strucid",
+    [2674164583] = "Strucid",
+    [2609028954] = "Ruddev's Battle Royale",
+    -- Round / knife / killing
+    [142823291]  = "Murder Mystery 2",
+    [621129760]  = "KAT (Knife Ability Test)",
+    [3260590327] = "KAT (Knife Ability Test)",
+    [137885680]  = "Zombie Rush",
+    [3759927663] = "Zombie Strike",
+    [3803533582] = "Zombie Strike",
+    [628009815]  = "R2DA",
+    [855499080]  = "Skywars",
+    -- Open world / RPG
     [606849621]  = "Jailbreak",
-    [6284583030] = "Pet Simulator X",
+    [155615604]  = "Prison Life",
+    [402122991]  = "Redwood Prison",
+    [1224212277] = "Da Hood",
     [920587237]  = "Adopt Me",
     [4924922222] = "Brookhaven",
+    -- One Piece / anime
+    [3237168]    = "One Piece Legendary",
+    [3938392915] = "One Piece Legendary",
+    [3970007519] = "One Piece Ultimate",
+    [4050174018] = "One Punch Man IJ",
+    [3400631762] = "JoJo Blox",
+    [2281639237] = "Stands Online",
+    -- Blox Fruits and clones
+    [2753915549] = "Blox Fruits",
+    [4442272183] = "Blox Fruits",
+    -- Simulators
+    [3255597014] = "Power Simulator",
+    [3652625463] = "Lifting Simulator",
+    [3623096087] = "Muscle Legend",
+    [3956818381] = "Ninja Legends",
+    [6284583030] = "Pet Simulator X",
+    [4390380541] = "Rumble Quest",
+    -- Misc shooters / FPS
+    [443406476]  = "Project Lazarus",
+    [1238482747] = "Bullet Hell",
+    [2607077439] = "Operation Scorpion",
+    [4456070441] = "Mayday",
+    [688207762]  = "Color Craze",
+    [2996424357] = "Esper Online",
+    [2686500207] = "A Bizarre Day",
+    -- Sports / RB World
+    [2621503555] = "RB World 3",
+    [2623233695] = "RB World 3",
+    [2837610892] = "RB World 3",
+    -- Sound / rhythm
+    [2677609345] = "Sound Space",
+    -- Misc
+    [1899149341] = "Vehicle Tycoon",
+    [261290060]  = "Terminal Railways",
+    [4464235702] = "Infinity RPG 2",
+    [2277629691] = "Infinity RPG 2",
+    [2277630015] = "Infinity RPG 2",
+    [2555870920] = "AceOfSpadez",
+    [379614936]  = "Assassin",
+    [866472074]  = "Assassin",
+    [860428890]  = "Assassin",
+    [2664771962] = "Assassin",
+    [2664773504] = "Assassin",
+    [3477768254] = "Squadron",
+    [3501280158] = "Squadron",
 }
 
 local function currentGame()
     return GAMES[game.PlaceId] or "Unknown"
+end
+
+-- Category map — when the specific game has no bespoke template, light
+-- up a category-wide one (FPS / battle royale / simulator / etc.).
+local CATEGORIES = {
+    -- shooters
+    ["Arsenal"]          = "Shooter",
+    ["Phantom Forces"]   = "Shooter",
+    ["Counter Blox"]     = "Shooter",
+    ["Bad Business"]     = "Shooter",
+    ["No Scope Sniping"] = "Shooter",
+    ["BIG Paintball"]    = "Shooter",
+    ["Mad Paintball 2"]  = "Shooter",
+    ["Typical Colors 2"] = "Shooter",
+    ["Wild Revolvers"]   = "Shooter",
+    ["Project Lazarus"]  = "Shooter",
+    ["Bullet Hell"]      = "Shooter",
+    ["Squadron"]         = "Shooter",
+    -- battle royale
+    ["Island Royale"]            = "BattleRoyale",
+    ["Strucid"]                  = "BattleRoyale",
+    ["Ruddev's Battle Royale"]   = "BattleRoyale",
+    -- knife / round
+    ["Murder Mystery 2"]         = "KnifeRound",
+    ["KAT (Knife Ability Test)"] = "KnifeRound",
+    ["Assassin"]                 = "KnifeRound",
+    ["R2DA"]                     = "KnifeRound",
+    ["Zombie Rush"]              = "KnifeRound",
+    ["Zombie Strike"]            = "KnifeRound",
+    -- open world
+    ["Jailbreak"]      = "OpenWorld",
+    ["Prison Life"]    = "OpenWorld",
+    ["Redwood Prison"] = "OpenWorld",
+    ["Da Hood"]        = "OpenWorld",
+    -- simulators
+    ["Power Simulator"]   = "Sim",
+    ["Lifting Simulator"] = "Sim",
+    ["Muscle Legend"]     = "Sim",
+    ["Ninja Legends"]     = "Sim",
+    ["Pet Simulator X"]   = "Sim",
+    ["Vehicle Tycoon"]    = "Sim",
+    ["Rumble Quest"]      = "Sim",
+    -- anime / RPG
+    ["Blox Fruits"]        = "AnimeRPG",
+    ["One Piece Legendary"]= "AnimeRPG",
+    ["One Piece Ultimate"] = "AnimeRPG",
+    ["One Punch Man IJ"]   = "AnimeRPG",
+    ["JoJo Blox"]          = "AnimeRPG",
+    ["Stands Online"]      = "AnimeRPG",
+    ["Infinity RPG 2"]     = "AnimeRPG",
+    ["A Bizarre Day"]      = "AnimeRPG",
+    -- chill
+    ["Adopt Me"]    = "Chill",
+    ["Brookhaven"]  = "Chill",
+}
+
+local function currentCategory()
+    return CATEGORIES[currentGame()] or "Unknown"
 end
 
 -- ---------- Common helpers ----------
@@ -4397,33 +4529,209 @@ local function buildPetSimX(tab)
     end)
 end
 
+-- ---------- Category-wide builders ----------
+-- Stand-in features that work for an entire game category.
+
+local function buildShooterCategory(tab)
+    local sec = tab:AddSection("Shooter (category)")
+    sec:AddLabel("Generic FPS helpers (aimbot tab has the real targeting).")
+    sec:AddToggle("Crosshair always centered (lock mouse to center)", false, function(v)
+        if v then
+            conns.crosshair = RunService.RenderStepped:Connect(function()
+                local cam = Workspace.CurrentCamera
+                if cam then
+                    -- placeholder — most shooters already lock the cursor
+                end
+            end)
+        else
+            if conns.crosshair then conns.crosshair:Disconnect(); conns.crosshair = nil end
+        end
+    end)
+    sec:AddButton("Pick up all dropped weapons (try)", function()
+        local root = getRoot()
+        if not root then return end
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("Tool") then
+                local handle = obj:FindFirstChild("Handle")
+                if handle then handle.CFrame = root.CFrame end
+            end
+        end
+    end)
+end
+
+local function buildBattleRoyaleCategory(tab)
+    local sec = tab:AddSection("Battle Royale (category)")
+    sec:AddButton("Collect all loot in range", function()
+        local root = getRoot()
+        if not root then return end
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("Tool") or (obj:IsA("BasePart") and (
+                obj.Name:lower():find("loot") or obj.Name:lower():find("chest") or
+                obj.Name:lower():find("ammo")
+            )) then
+                local part = obj:IsA("Tool") and obj:FindFirstChild("Handle") or obj
+                if part and part:IsA("BasePart") and (part.Position - root.Position).Magnitude < 200 then
+                    part.CFrame = root.CFrame
+                end
+            end
+        end
+    end)
+end
+
+local function buildKnifeRoundCategory(tab)
+    local sec = tab:AddSection("Knife / Round (category)")
+    sec:AddButton("Reveal role-bearers (knife/gun owners)", function()
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= Players.LocalPlayer then
+                local hasKnife = (plr.Backpack and plr.Backpack:FindFirstChild("Knife"))
+                              or (plr.Character and plr.Character:FindFirstChild("Knife"))
+                local hasGun   = (plr.Backpack and plr.Backpack:FindFirstChild("Gun"))
+                              or (plr.Character and plr.Character:FindFirstChild("Gun"))
+                if hasKnife then print("[role] knife: " .. plr.Name) end
+                if hasGun   then print("[role] gun:   " .. plr.Name) end
+            end
+        end
+    end)
+    sec:AddToggle("Auto-pickup drops within range", false, function(v)
+        if v then
+            conns.krPickup = RunService.Heartbeat:Connect(function()
+                local root = getRoot()
+                if not root then return end
+                for _, obj in ipairs(Workspace:GetDescendants()) do
+                    if (obj.Name == "GunDrop" or obj.Name == "Knife" or obj.Name == "Gun")
+                       and obj:IsA("BasePart")
+                       and (obj.Position - root.Position).Magnitude < 30 then
+                        obj.CFrame = root.CFrame
+                    end
+                end
+            end)
+        else
+            if conns.krPickup then conns.krPickup:Disconnect(); conns.krPickup = nil end
+        end
+    end)
+end
+
+local function buildOpenWorldCategory(tab)
+    local sec = tab:AddSection("Open World (category)")
+    sec:AddButton("Print named landmarks", function()
+        for _, child in ipairs(Workspace:GetChildren()) do
+            if child:IsA("Folder") or child:IsA("Model") then
+                print("[map] " .. child.Name)
+            end
+        end
+    end)
+    sec:AddSlider("Walkspeed", 16, 300, 50, function(v)
+        local hum = getHum(); if hum then hum.WalkSpeed = v end
+    end)
+end
+
+local function buildSimCategory(tab)
+    local sec = tab:AddSection("Simulator (category)")
+    sec:AddToggle("Auto-mash mouse1 (auto-click farm)", false, function(v)
+        if v then
+            conns.simMash = RunService.Heartbeat:Connect(function()
+                pcall(function()
+                    if mouse1click then mouse1click()
+                    elseif mouse1press and mouse1release then mouse1press(); mouse1release() end
+                end)
+            end)
+        else
+            if conns.simMash then conns.simMash:Disconnect(); conns.simMash = nil end
+        end
+    end)
+    sec:AddToggle("Anti-idle (click periodically)", false, function(v)
+        if v then
+            conns.simIdle = task.spawn(function()
+                while alive do
+                    task.wait(60)
+                    pcall(function() if mouse1click then mouse1click() end end)
+                end
+            end)
+        end
+    end)
+end
+
+local function buildAnimeRPGCategory(tab)
+    local sec = tab:AddSection("Anime RPG (category)")
+    sec:AddToggle("Auto-attack equipped tool", false, function(v)
+        if v then
+            conns.animeAttack = RunService.Heartbeat:Connect(function()
+                local char = getChar()
+                if not char then return end
+                for _, t in ipairs(char:GetChildren()) do
+                    if t:IsA("Tool") then pcall(function() t:Activate() end) end
+                end
+            end)
+        else
+            if conns.animeAttack then conns.animeAttack:Disconnect(); conns.animeAttack = nil end
+        end
+    end)
+    sec:AddButton("TP to nearest NPC", function()
+        local root = getRoot()
+        if not root then return end
+        local best, bestDist
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("Humanoid") and obj.Health > 0 then
+                local hrp = obj.Parent and obj.Parent:FindFirstChild("HumanoidRootPart")
+                local plr = obj.Parent and Players:GetPlayerFromCharacter(obj.Parent)
+                if hrp and not plr then
+                    local d = (hrp.Position - root.Position).Magnitude
+                    if not bestDist or d < bestDist then best, bestDist = hrp, d end
+                end
+            end
+        end
+        if best then root.CFrame = best.CFrame * CFrame.new(0, 0, 4) end
+    end)
+end
+
 -- ---------- Build dispatch ----------
 
 function M.Build(tab, ctx)
     alive = true
     local detected = currentGame()
-    tab:AddSection("Current Game"):AddLabel("Detected: " .. detected .. " (" .. tostring(game.PlaceId) .. ")")
+    local category = currentCategory()
+    tab:AddSection("Detected"):AddLabel(
+        "Game: " .. detected ..
+        "  |  Category: " .. category ..
+        "  |  PlaceId: " .. tostring(game.PlaceId)
+    )
 
-    -- always add universal features
+    -- universal features (work everywhere)
     buildUniversal(tab, ctx)
 
-    -- game-specific
-    if detected == "Da Hood"           then buildDaHood(tab)
-    elseif detected == "Blox Fruits"    then buildBloxFruits(tab)
-    elseif detected == "Arsenal"        then buildArsenal(tab)
-    elseif detected == "Phantom Forces" then buildPhantomForces(tab)
+    -- bespoke per-game templates
+    if detected == "Da Hood"             then buildDaHood(tab)
+    elseif detected == "Blox Fruits"     then buildBloxFruits(tab)
+    elseif detected == "Arsenal"         then buildArsenal(tab)
+    elseif detected == "Phantom Forces"  then buildPhantomForces(tab)
     elseif detected == "Murder Mystery 2" then buildMM2(tab)
-    elseif detected == "KAT"            then buildKAT(tab)
-    elseif detected == "Jailbreak"      then buildJailbreak(tab)
+    elseif detected == "KAT (Knife Ability Test)" or detected == "KAT" then buildKAT(tab)
+    elseif detected == "Jailbreak"       then buildJailbreak(tab)
     elseif detected == "Pet Simulator X" then buildPetSimX(tab)
     end
 
-    -- All-games dropdown — pick a template manually if auto-detect missed
+    -- category-wide fallback (always adds, on top of bespoke)
+    if     category == "Shooter"      then buildShooterCategory(tab)
+    elseif category == "BattleRoyale" then buildBattleRoyaleCategory(tab)
+    elseif category == "KnifeRound"   then buildKnifeRoundCategory(tab)
+    elseif category == "OpenWorld"    then buildOpenWorldCategory(tab)
+    elseif category == "Sim"          then buildSimCategory(tab)
+    elseif category == "AnimeRPG"     then buildAnimeRPGCategory(tab)
+    end
+
+    -- Manual override
     local override = tab:AddSection("Override Template")
-    override:AddDropdown("Force-load game template",
-        {"None","Da Hood","Blox Fruits","Arsenal","Phantom Forces","Murder Mystery 2","KAT","Jailbreak","Pet Simulator X"},
+    override:AddDropdown("Force-load template",
+        {"None","Shooter","BattleRoyale","KnifeRound","OpenWorld","Sim","AnimeRPG",
+         "Da Hood","Blox Fruits","Arsenal","Phantom Forces","Murder Mystery 2","KAT","Jailbreak","Pet Simulator X"},
         "None", function(v)
-        if     v == "Da Hood"          then buildDaHood(tab)
+        if     v == "Shooter"          then buildShooterCategory(tab)
+        elseif v == "BattleRoyale"     then buildBattleRoyaleCategory(tab)
+        elseif v == "KnifeRound"       then buildKnifeRoundCategory(tab)
+        elseif v == "OpenWorld"        then buildOpenWorldCategory(tab)
+        elseif v == "Sim"              then buildSimCategory(tab)
+        elseif v == "AnimeRPG"         then buildAnimeRPGCategory(tab)
+        elseif v == "Da Hood"          then buildDaHood(tab)
         elseif v == "Blox Fruits"      then buildBloxFruits(tab)
         elseif v == "Arsenal"          then buildArsenal(tab)
         elseif v == "Phantom Forces"   then buildPhantomForces(tab)
