@@ -2920,14 +2920,41 @@ local function hookSilentAim()
         return char and char:FindFirstChild("Head")
     end
 
+    -- Guard: if the call originates from our own hub (not from game
+    -- code), pass through unmodified so we don't accidentally redirect
+    -- our own raycasts/Mouse reads. UNC `checkcaller()` returns true
+    -- for executor-side calls.
+    local function ourCall()
+        if type(checkcaller) ~= "function" then return false end
+        local ok, val = pcall(checkcaller)
+        return ok and val or false
+    end
+
     mt.__index = newcclosure(function(self, key)
-        if state.SilentAim and typeof(self) == "Instance" and self:IsA("Mouse") then
-            if key == "Hit" then
-                local head = redirectHead()
-                if head then return CFrame.new(head.Position) end
-            elseif key == "Target" then
-                local head = redirectHead()
-                if head then return head end
+        if state.SilentAim and not ourCall() and typeof(self) == "Instance" and self:IsA("Mouse") then
+            local head = redirectHead()
+            if head then
+                local cam = Workspace.CurrentCamera
+                if key == "Hit" then
+                    return CFrame.new(head.Position)
+                elseif key == "Target" then
+                    return head
+                elseif key == "X" then
+                    if cam then
+                        local p = cam:WorldToViewportPoint(head.Position)
+                        return math.floor(p.X)
+                    end
+                elseif key == "Y" then
+                    if cam then
+                        local p = cam:WorldToViewportPoint(head.Position)
+                        return math.floor(p.Y)
+                    end
+                elseif key == "UnitRay" then
+                    if cam then
+                        return Ray.new(cam.CFrame.Position,
+                                       (head.Position - cam.CFrame.Position).Unit)
+                    end
+                end
             end
         end
         return oldIndex(self, key)
@@ -2935,21 +2962,37 @@ local function hookSilentAim()
 
     mt.__namecall = newcclosure(function(self, ...)
         local method = getnamecallmethod()
-        if state.SilentAim and method == "GetMouseLocation" and typeof(self) == "Instance" and self.ClassName == "UserInputService" then
-            local head = redirectHead()
-            if head then
-                local cam = Workspace.CurrentCamera
-                local screen = cam:WorldToViewportPoint(head.Position)
-                return Vector2.new(screen.X, screen.Y)
+        if state.SilentAim and not ourCall() then
+            -- UserInputService:GetMouseLocation()
+            if method == "GetMouseLocation"
+               and typeof(self) == "Instance"
+               and self.ClassName == "UserInputService" then
+                local head = redirectHead()
+                if head then
+                    local cam = Workspace.CurrentCamera
+                    if cam then
+                        local screen = cam:WorldToViewportPoint(head.Position)
+                        return Vector2.new(screen.X, screen.Y)
+                    end
+                end
             end
-        end
-        if state.SilentAim and (method == "Raycast" or method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList") and typeof(self) == "Instance" and self.ClassName == "Workspace" then
-            local args = {...}
-            local origin = args[1]
-            local head = redirectHead()
-            if head and typeof(origin) == "Vector3" then
-                args[2] = (head.Position - origin)
-                return oldNamecall(self, table.unpack(args))
+            -- Workspace raycast family: Raycast, FindPartOnRay,
+            -- FindPartOnRayWithIgnoreList, FindPartOnRayWithWhitelist
+            if (method == "Raycast" or method == "FindPartOnRay"
+                or method == "FindPartOnRayWithIgnoreList"
+                or method == "FindPartOnRayWithWhitelist")
+               and typeof(self) == "Instance"
+               and self.ClassName == "Workspace" then
+                local args = {...}
+                local origin = args[1]
+                local head = redirectHead()
+                -- Type validation: only rewrite when the first arg is
+                -- the spatial origin we expect. Avoids breaking unusual
+                -- raycast call shapes from custom game scripts.
+                if head and typeof(origin) == "Vector3" then
+                    args[2] = (head.Position - origin)
+                    return oldNamecall(self, table.unpack(args))
+                end
             end
         end
         return oldNamecall(self, ...)
@@ -3635,6 +3678,9 @@ local state = {
     OffscreenArrows= false,
     KeyOverlay     = false,
     Keys           = {},        -- [label] = "KeyName"
+    Killfeed       = false,
+    KillfeedMax    = 6,
+    KillfeedFade   = 4,
 }
 
 local conns = {}
@@ -3984,6 +4030,111 @@ function M.UnregisterKey(label)
 end
 
 -- ============================================================
+-- Killfeed
+-- ============================================================
+-- Watches every Humanoid.Died across all players. When someone dies,
+-- look back through Humanoid.HealthChanged history to attribute the
+-- kill to the last damage source (best-effort; many games are
+-- server-authoritative so we can't see the actual killer reliably).
+-- For now we just show "[died] DisplayName" entries and fade them.
+
+local killFeed, killList
+
+local function buildKillFeed(gui)
+    if killFeed then return end
+    killFeed = Instance.new("Frame")
+    killFeed.Name = "Killfeed"
+    killFeed.AnchorPoint = Vector2.new(1, 1)
+    killFeed.Position = UDim2.new(1, -12, 1, -130)
+    killFeed.Size = UDim2.new(0, 230, 0, 0)
+    killFeed.AutomaticSize = Enum.AutomaticSize.Y
+    killFeed.BackgroundTransparency = 1
+    killFeed.Visible = false
+    killFeed.Parent = gui
+
+    killList = killFeed
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 3)
+    layout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+    layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+    layout.Parent = killFeed
+end
+
+local function pushKillEntry(text, accent)
+    if not killList then return end
+    local row = Instance.new("Frame")
+    row.BackgroundColor3 = THEME.Bg
+    row.BackgroundTransparency = 0.1
+    row.BorderSizePixel = 0
+    row.Size = UDim2.new(0, 0, 0, 22)
+    row.AutomaticSize = Enum.AutomaticSize.X
+    row.Parent = killList
+    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 4); c.Parent = row
+    local s = Instance.new("UIStroke"); s.Color = accent or THEME.Accent; s.Thickness = 1; s.Parent = row
+
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.AutomaticSize = Enum.AutomaticSize.X
+    lbl.Size = UDim2.new(0, 0, 1, 0)
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.Text = "  " .. text .. "  "
+    lbl.TextColor3 = THEME.Text
+    lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
+
+    -- Cap list length
+    local count = 0
+    for _, ch in ipairs(killList:GetChildren()) do
+        if ch:IsA("Frame") then count = count + 1 end
+    end
+    if count > state.KillfeedMax then
+        for _, ch in ipairs(killList:GetChildren()) do
+            if ch:IsA("Frame") then ch:Destroy(); break end
+        end
+    end
+
+    -- Fade out and destroy
+    task.delay(state.KillfeedFade, function()
+        if row.Parent then
+            for i = 1, 10 do
+                if not row.Parent then break end
+                row.BackgroundTransparency = math.clamp(0.1 + i * 0.09, 0, 1)
+                s.Transparency = math.clamp(i * 0.1, 0, 1)
+                lbl.TextTransparency = math.clamp(i * 0.1, 0, 1)
+                task.wait(0.05)
+            end
+            row:Destroy()
+        end
+    end)
+end
+
+local function attachKillWatchers()
+    -- For each current and future player, hook Humanoid.Died.
+    local function watchPlayer(plr)
+        local function watchChar(char)
+            local hum = char:WaitForChild("Humanoid", 3)
+            if not hum then return end
+            local conn
+            conn = hum.Died:Connect(function()
+                if state.Killfeed then
+                    pushKillEntry("died: " .. plr.DisplayName,
+                        plr == Players.LocalPlayer and THEME.Bad or THEME.Accent)
+                end
+                if conn then conn:Disconnect() end
+            end)
+            table.insert(conns, conn)
+        end
+        if plr.Character then watchChar(plr.Character) end
+        local addConn = plr.CharacterAdded:Connect(watchChar)
+        table.insert(conns, addConn)
+    end
+    for _, plr in ipairs(Players:GetPlayers()) do watchPlayer(plr) end
+    table.insert(conns, Players.PlayerAdded:Connect(watchPlayer))
+end
+
+-- ============================================================
 -- Off-screen arrows
 -- ============================================================
 
@@ -4094,6 +4245,20 @@ function M.Build(tab, ctx)
     M.RegisterKey("Toggle UI", "RightCtrl")
     M.RegisterKey("Console", "Backquote")
     M.RegisterKey("Freecam", "RightShift")
+
+    -- ----- Killfeed -----
+    buildKillFeed(gui)
+    attachKillWatchers()
+    local kf = tab:AddSection("Killfeed")
+    kf:AddToggle("Show killfeed (bottom-right)", false, function(v)
+        state.Killfeed = v
+        if killFeed then killFeed.Visible = v end
+    end)
+    kf:AddSlider("Max entries", 2, 16, 6, function(v) state.KillfeedMax = math.floor(v) end)
+    kf:AddSlider("Fade after (sec)", 1, 15, 4, function(v) state.KillfeedFade = v end)
+    kf:AddButton("Test entry", function()
+        if state.Killfeed then pushKillEntry("test entry", THEME.Accent) end
+    end)
 
     conns.render = RunService.RenderStepped:Connect(function()
         updateWatermark()
@@ -5009,6 +5174,159 @@ local function buildPetSimX(tab)
     end)
 end
 
+-- ---------- Game: Counter Blox ----------
+
+local function buildCounterBlox(tab)
+    local sec = tab:AddSection("Counter Blox")
+    sec:AddLabel("Detected: Counter Blox (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Auto-fire on lock", false, function(v)
+        if v then
+            conns.cbFire = RunService.Heartbeat:Connect(function()
+                pcall(function() if mouse1click then mouse1click() end end)
+            end)
+        else
+            if conns.cbFire then conns.cbFire:Disconnect(); conns.cbFire = nil end
+        end
+    end)
+    sec:AddToggle("No recoil (best-effort)", false, function(v)
+        if v then
+            conns.cbRecoil = RunService.RenderStepped:Connect(function()
+                local lp = Players.LocalPlayer
+                local char = lp and lp.Character
+                local tool = char and char:FindFirstChildOfClass("Tool")
+                if tool then
+                    local recoil = tool:FindFirstChild("Recoil")
+                    if recoil and recoil:IsA("NumberValue") then recoil.Value = 0 end
+                end
+            end)
+        else
+            if conns.cbRecoil then conns.cbRecoil:Disconnect(); conns.cbRecoil = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Strucid ----------
+
+local function buildStrucid(tab)
+    local sec = tab:AddSection("Strucid")
+    sec:AddLabel("Detected: Strucid (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddButton("Collect all materials", function()
+        local root = getRoot()
+        if not root then return end
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj.Name == "Material" or obj.Name == "Mat" then
+                if obj:IsA("BasePart") then obj.CFrame = root.CFrame end
+            end
+        end
+    end)
+    sec:AddToggle("Auto-build wall under target", false, function(v)
+        -- Strucid wall placement varies per version; this is a stub.
+        if v then
+            Players.LocalPlayer:Kick("[stub] auto-build not implemented")
+        end
+    end)
+end
+
+-- ---------- Game: Bad Business ----------
+
+local function buildBadBusiness(tab)
+    local sec = tab:AddSection("Bad Business")
+    sec:AddLabel("Detected: Bad Business (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddToggle("Hold to fire while aiming", false, function(v)
+        if v then
+            conns.bbFire = RunService.Heartbeat:Connect(function()
+                pcall(function() if mouse1press then mouse1press(); task.wait(0.05); mouse1release() end end)
+            end)
+        else
+            if conns.bbFire then conns.bbFire:Disconnect(); conns.bbFire = nil end
+        end
+    end)
+end
+
+-- ---------- Game: Prison Life ----------
+
+local function buildPrisonLife(tab)
+    local sec = tab:AddSection("Prison Life")
+    sec:AddLabel("Detected: Prison Life (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddButton("Take all guns (prison armory)", function()
+        local lp = Players.LocalPlayer
+        local root = getRoot()
+        if not root then return end
+        for _, item in ipairs(Workspace:GetDescendants()) do
+            if item:IsA("Tool") then
+                local handle = item:FindFirstChild("Handle")
+                if handle then handle.CFrame = root.CFrame end
+            end
+        end
+    end)
+    sec:AddButton("Open all doors / cells", function()
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj.Name:lower():find("door") and obj:IsA("BasePart") then
+                pcall(function() obj.CanCollide = false; obj.Transparency = 0.8 end)
+            end
+        end
+    end)
+    sec:AddButton("Teleport to gun shop", function()
+        local root = getRoot()
+        local gs = Workspace:FindFirstChild("Gun Shop", true) or Workspace:FindFirstChild("GunShop", true)
+        if root and gs then
+            local p = gs:IsA("BasePart") and gs or gs:FindFirstChildWhichIsA("BasePart")
+            if p then root.CFrame = p.CFrame + Vector3.new(0, 4, 0) end
+        end
+    end)
+end
+
+-- ---------- Game: Adopt Me ----------
+
+local function buildAdoptMe(tab)
+    local sec = tab:AddSection("Adopt Me")
+    sec:AddLabel("Detected: Adopt Me (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddSlider("Walkspeed", 16, 200, 30, function(v)
+        local hum = getHum(); if hum then hum.WalkSpeed = v end
+    end)
+    sec:AddButton("Teleport to next quest marker", function()
+        local root = getRoot()
+        if not root then return end
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj.Name:find("Quest") and obj:IsA("BasePart") then
+                root.CFrame = obj.CFrame + Vector3.new(0, 3, 0); return
+            end
+        end
+    end)
+end
+
+-- ---------- Game: Brookhaven ----------
+
+local function buildBrookhaven(tab)
+    local sec = tab:AddSection("Brookhaven")
+    sec:AddLabel("Detected: Brookhaven (PlaceId " .. tostring(game.PlaceId) .. ")")
+    sec:AddSlider("Walkspeed", 16, 200, 30, function(v)
+        local hum = getHum(); if hum then hum.WalkSpeed = v end
+    end)
+    sec:AddSlider("Jump power", 50, 500, 100, function(v)
+        local hum = getHum()
+        if hum then
+            if hum.UseJumpPower then hum.JumpPower = v
+            else hum.JumpHeight = v / 4 end
+        end
+    end)
+    sec:AddButton("Snap to nearest car", function()
+        local root = getRoot()
+        if not root then return end
+        local best, bestDist
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj.Name:lower():find("vehicle") or obj.Name:lower():find("car") then
+                local p = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
+                if p then
+                    local d = (p.Position - root.Position).Magnitude
+                    if not bestDist or d < bestDist then best, bestDist = p, d end
+                end
+            end
+        end
+        if best then root.CFrame = best.CFrame + Vector3.new(0, 5, 0) end
+    end)
+end
+
 -- ---------- Category-wide builders ----------
 -- Stand-in features that work for an entire game category.
 
@@ -5180,14 +5498,20 @@ function M.Build(tab, ctx)
     buildUniversal(tab, ctx)
 
     -- bespoke per-game templates
-    if detected == "Da Hood"             then buildDaHood(tab)
-    elseif detected == "Blox Fruits"     then buildBloxFruits(tab)
-    elseif detected == "Arsenal"         then buildArsenal(tab)
-    elseif detected == "Phantom Forces"  then buildPhantomForces(tab)
+    if     detected == "Da Hood"          then buildDaHood(tab)
+    elseif detected == "Blox Fruits"      then buildBloxFruits(tab)
+    elseif detected == "Arsenal"          then buildArsenal(tab)
+    elseif detected == "Phantom Forces"   then buildPhantomForces(tab)
     elseif detected == "Murder Mystery 2" then buildMM2(tab)
     elseif detected == "KAT (Knife Ability Test)" or detected == "KAT" then buildKAT(tab)
-    elseif detected == "Jailbreak"       then buildJailbreak(tab)
-    elseif detected == "Pet Simulator X" then buildPetSimX(tab)
+    elseif detected == "Jailbreak"        then buildJailbreak(tab)
+    elseif detected == "Pet Simulator X"  then buildPetSimX(tab)
+    elseif detected == "Counter Blox"     then buildCounterBlox(tab)
+    elseif detected == "Strucid"          then buildStrucid(tab)
+    elseif detected == "Bad Business"     then buildBadBusiness(tab)
+    elseif detected == "Prison Life"      then buildPrisonLife(tab)
+    elseif detected == "Adopt Me"         then buildAdoptMe(tab)
+    elseif detected == "Brookhaven"       then buildBrookhaven(tab)
     end
 
     -- category-wide fallback (always adds, on top of bespoke)
@@ -5203,7 +5527,8 @@ function M.Build(tab, ctx)
     local override = tab:AddSection("Override Template")
     override:AddDropdown("Force-load template",
         {"None","Shooter","BattleRoyale","KnifeRound","OpenWorld","Sim","AnimeRPG",
-         "Da Hood","Blox Fruits","Arsenal","Phantom Forces","Murder Mystery 2","KAT","Jailbreak","Pet Simulator X"},
+         "Da Hood","Blox Fruits","Arsenal","Phantom Forces","Murder Mystery 2","KAT","Jailbreak","Pet Simulator X",
+         "Counter Blox","Strucid","Bad Business","Prison Life","Adopt Me","Brookhaven"},
         "None", function(v)
         if     v == "Shooter"          then buildShooterCategory(tab)
         elseif v == "BattleRoyale"     then buildBattleRoyaleCategory(tab)
@@ -5219,6 +5544,12 @@ function M.Build(tab, ctx)
         elseif v == "KAT"              then buildKAT(tab)
         elseif v == "Jailbreak"        then buildJailbreak(tab)
         elseif v == "Pet Simulator X"  then buildPetSimX(tab)
+        elseif v == "Counter Blox"     then buildCounterBlox(tab)
+        elseif v == "Strucid"          then buildStrucid(tab)
+        elseif v == "Bad Business"     then buildBadBusiness(tab)
+        elseif v == "Prison Life"      then buildPrisonLife(tab)
+        elseif v == "Adopt Me"         then buildAdoptMe(tab)
+        elseif v == "Brookhaven"       then buildBrookhaven(tab)
         end
     end)
 end

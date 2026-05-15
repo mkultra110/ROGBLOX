@@ -98,14 +98,41 @@ local function hookSilentAim()
         return char and char:FindFirstChild("Head")
     end
 
+    -- Guard: if the call originates from our own hub (not from game
+    -- code), pass through unmodified so we don't accidentally redirect
+    -- our own raycasts/Mouse reads. UNC `checkcaller()` returns true
+    -- for executor-side calls.
+    local function ourCall()
+        if type(checkcaller) ~= "function" then return false end
+        local ok, val = pcall(checkcaller)
+        return ok and val or false
+    end
+
     mt.__index = newcclosure(function(self, key)
-        if state.SilentAim and typeof(self) == "Instance" and self:IsA("Mouse") then
-            if key == "Hit" then
-                local head = redirectHead()
-                if head then return CFrame.new(head.Position) end
-            elseif key == "Target" then
-                local head = redirectHead()
-                if head then return head end
+        if state.SilentAim and not ourCall() and typeof(self) == "Instance" and self:IsA("Mouse") then
+            local head = redirectHead()
+            if head then
+                local cam = Workspace.CurrentCamera
+                if key == "Hit" then
+                    return CFrame.new(head.Position)
+                elseif key == "Target" then
+                    return head
+                elseif key == "X" then
+                    if cam then
+                        local p = cam:WorldToViewportPoint(head.Position)
+                        return math.floor(p.X)
+                    end
+                elseif key == "Y" then
+                    if cam then
+                        local p = cam:WorldToViewportPoint(head.Position)
+                        return math.floor(p.Y)
+                    end
+                elseif key == "UnitRay" then
+                    if cam then
+                        return Ray.new(cam.CFrame.Position,
+                                       (head.Position - cam.CFrame.Position).Unit)
+                    end
+                end
             end
         end
         return oldIndex(self, key)
@@ -113,21 +140,37 @@ local function hookSilentAim()
 
     mt.__namecall = newcclosure(function(self, ...)
         local method = getnamecallmethod()
-        if state.SilentAim and method == "GetMouseLocation" and typeof(self) == "Instance" and self.ClassName == "UserInputService" then
-            local head = redirectHead()
-            if head then
-                local cam = Workspace.CurrentCamera
-                local screen = cam:WorldToViewportPoint(head.Position)
-                return Vector2.new(screen.X, screen.Y)
+        if state.SilentAim and not ourCall() then
+            -- UserInputService:GetMouseLocation()
+            if method == "GetMouseLocation"
+               and typeof(self) == "Instance"
+               and self.ClassName == "UserInputService" then
+                local head = redirectHead()
+                if head then
+                    local cam = Workspace.CurrentCamera
+                    if cam then
+                        local screen = cam:WorldToViewportPoint(head.Position)
+                        return Vector2.new(screen.X, screen.Y)
+                    end
+                end
             end
-        end
-        if state.SilentAim and (method == "Raycast" or method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList") and typeof(self) == "Instance" and self.ClassName == "Workspace" then
-            local args = {...}
-            local origin = args[1]
-            local head = redirectHead()
-            if head and typeof(origin) == "Vector3" then
-                args[2] = (head.Position - origin)
-                return oldNamecall(self, table.unpack(args))
+            -- Workspace raycast family: Raycast, FindPartOnRay,
+            -- FindPartOnRayWithIgnoreList, FindPartOnRayWithWhitelist
+            if (method == "Raycast" or method == "FindPartOnRay"
+                or method == "FindPartOnRayWithIgnoreList"
+                or method == "FindPartOnRayWithWhitelist")
+               and typeof(self) == "Instance"
+               and self.ClassName == "Workspace" then
+                local args = {...}
+                local origin = args[1]
+                local head = redirectHead()
+                -- Type validation: only rewrite when the first arg is
+                -- the spatial origin we expect. Avoids breaking unusual
+                -- raycast call shapes from custom game scripts.
+                if head and typeof(origin) == "Vector3" then
+                    args[2] = (head.Position - origin)
+                    return oldNamecall(self, table.unpack(args))
+                end
             end
         end
         return oldNamecall(self, ...)

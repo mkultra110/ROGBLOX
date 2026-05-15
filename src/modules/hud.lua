@@ -23,6 +23,9 @@ local state = {
     OffscreenArrows= false,
     KeyOverlay     = false,
     Keys           = {},        -- [label] = "KeyName"
+    Killfeed       = false,
+    KillfeedMax    = 6,
+    KillfeedFade   = 4,
 }
 
 local conns = {}
@@ -372,6 +375,111 @@ function M.UnregisterKey(label)
 end
 
 -- ============================================================
+-- Killfeed
+-- ============================================================
+-- Watches every Humanoid.Died across all players. When someone dies,
+-- look back through Humanoid.HealthChanged history to attribute the
+-- kill to the last damage source (best-effort; many games are
+-- server-authoritative so we can't see the actual killer reliably).
+-- For now we just show "[died] DisplayName" entries and fade them.
+
+local killFeed, killList
+
+local function buildKillFeed(gui)
+    if killFeed then return end
+    killFeed = Instance.new("Frame")
+    killFeed.Name = "Killfeed"
+    killFeed.AnchorPoint = Vector2.new(1, 1)
+    killFeed.Position = UDim2.new(1, -12, 1, -130)
+    killFeed.Size = UDim2.new(0, 230, 0, 0)
+    killFeed.AutomaticSize = Enum.AutomaticSize.Y
+    killFeed.BackgroundTransparency = 1
+    killFeed.Visible = false
+    killFeed.Parent = gui
+
+    killList = killFeed
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 3)
+    layout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+    layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+    layout.Parent = killFeed
+end
+
+local function pushKillEntry(text, accent)
+    if not killList then return end
+    local row = Instance.new("Frame")
+    row.BackgroundColor3 = THEME.Bg
+    row.BackgroundTransparency = 0.1
+    row.BorderSizePixel = 0
+    row.Size = UDim2.new(0, 0, 0, 22)
+    row.AutomaticSize = Enum.AutomaticSize.X
+    row.Parent = killList
+    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 4); c.Parent = row
+    local s = Instance.new("UIStroke"); s.Color = accent or THEME.Accent; s.Thickness = 1; s.Parent = row
+
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.AutomaticSize = Enum.AutomaticSize.X
+    lbl.Size = UDim2.new(0, 0, 1, 0)
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.Text = "  " .. text .. "  "
+    lbl.TextColor3 = THEME.Text
+    lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
+
+    -- Cap list length
+    local count = 0
+    for _, ch in ipairs(killList:GetChildren()) do
+        if ch:IsA("Frame") then count = count + 1 end
+    end
+    if count > state.KillfeedMax then
+        for _, ch in ipairs(killList:GetChildren()) do
+            if ch:IsA("Frame") then ch:Destroy(); break end
+        end
+    end
+
+    -- Fade out and destroy
+    task.delay(state.KillfeedFade, function()
+        if row.Parent then
+            for i = 1, 10 do
+                if not row.Parent then break end
+                row.BackgroundTransparency = math.clamp(0.1 + i * 0.09, 0, 1)
+                s.Transparency = math.clamp(i * 0.1, 0, 1)
+                lbl.TextTransparency = math.clamp(i * 0.1, 0, 1)
+                task.wait(0.05)
+            end
+            row:Destroy()
+        end
+    end)
+end
+
+local function attachKillWatchers()
+    -- For each current and future player, hook Humanoid.Died.
+    local function watchPlayer(plr)
+        local function watchChar(char)
+            local hum = char:WaitForChild("Humanoid", 3)
+            if not hum then return end
+            local conn
+            conn = hum.Died:Connect(function()
+                if state.Killfeed then
+                    pushKillEntry("died: " .. plr.DisplayName,
+                        plr == Players.LocalPlayer and THEME.Bad or THEME.Accent)
+                end
+                if conn then conn:Disconnect() end
+            end)
+            table.insert(conns, conn)
+        end
+        if plr.Character then watchChar(plr.Character) end
+        local addConn = plr.CharacterAdded:Connect(watchChar)
+        table.insert(conns, addConn)
+    end
+    for _, plr in ipairs(Players:GetPlayers()) do watchPlayer(plr) end
+    table.insert(conns, Players.PlayerAdded:Connect(watchPlayer))
+end
+
+-- ============================================================
 -- Off-screen arrows
 -- ============================================================
 
@@ -482,6 +590,20 @@ function M.Build(tab, ctx)
     M.RegisterKey("Toggle UI", "RightCtrl")
     M.RegisterKey("Console", "Backquote")
     M.RegisterKey("Freecam", "RightShift")
+
+    -- ----- Killfeed -----
+    buildKillFeed(gui)
+    attachKillWatchers()
+    local kf = tab:AddSection("Killfeed")
+    kf:AddToggle("Show killfeed (bottom-right)", false, function(v)
+        state.Killfeed = v
+        if killFeed then killFeed.Visible = v end
+    end)
+    kf:AddSlider("Max entries", 2, 16, 6, function(v) state.KillfeedMax = math.floor(v) end)
+    kf:AddSlider("Fade after (sec)", 1, 15, 4, function(v) state.KillfeedFade = v end)
+    kf:AddButton("Test entry", function()
+        if state.Killfeed then pushKillEntry("test entry", THEME.Accent) end
+    end)
 
     conns.render = RunService.RenderStepped:Connect(function()
         updateWatermark()
