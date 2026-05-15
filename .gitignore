@@ -4,4 +4,7 @@
 *.swp
 .DS_Store
 Thumbs.db
-dist/
+
+# build artifacts
+launch-bundled.ps1
+ROGBLOX.exe

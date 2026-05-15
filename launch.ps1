@@ -16,6 +16,23 @@ $RawBase = "https://raw.githubusercontent.com/$Repo/$Branch"
 $Loader  = 'loadstring(game:HttpGet("' + $RawBase + '/src/main.lua"))()'
 $ExecutorSearch = 'https://www.google.com/search?q=Solara+roblox+executor+download+2026'
 
+# bundle.ps1 replaces the empty string below with the Base64-encoded
+# bundled rogblox.lua. When non-empty, the loader writes the decoded
+# Lua directly to autoexec — fully offline, no GitHub fetch needed.
+$EmbeddedScriptB64 = ''
+
+function Get-AutoexecPayload {
+    if ($EmbeddedScriptB64 -and $EmbeddedScriptB64.Length -gt 32) {
+        try {
+            $bytes = [Convert]::FromBase64String($EmbeddedScriptB64)
+            return [System.Text.Encoding]::UTF8.GetString($bytes)
+        } catch {
+            return $Loader
+        }
+    }
+    return $Loader
+}
+
 function Get-ExecutorPaths {
     $l = $env:LOCALAPPDATA; $r = $env:APPDATA; $u = $env:USERPROFILE
     @(
@@ -41,11 +58,12 @@ function Find-AutoexecFolders {
 }
 
 function Install-Cheat {
+    $payload = Get-AutoexecPayload
     $list = @()
     foreach ($p in (Find-AutoexecFolders)) {
         try {
             if (-not (Test-Path $p)) { New-Item -ItemType Directory -Force -Path $p | Out-Null }
-            Set-Content -Path (Join-Path $p 'rogblox.lua') -Value $Loader -Encoding UTF8
+            Set-Content -Path (Join-Path $p 'rogblox.lua') -Value $payload -Encoding UTF8
             $list += (Split-Path (Split-Path $p -Parent) -Leaf)
         } catch {}
     }
