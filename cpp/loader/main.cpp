@@ -153,6 +153,11 @@ static std::vector<fs::path> detect_installed_executors() {
 
 // ---------- Auto-installer (download Solara if no executor found) ----------
 
+// Forward decl - defined further down with the click handler. We use it
+// inside the installer so the user sees per-step progress instead of a
+// silent multi-minute hang.
+static void post_status(const std::wstring& text, COLORREF color);
+
 // Parses a https URL into (host, path) wide strings. Returns false on
 // malformed input.
 static bool parse_url(const std::wstring& url, std::wstring& host_out,
@@ -182,15 +187,21 @@ static bool parse_url(const std::wstring& url, std::wstring& host_out,
 }
 
 // HTTPS GET via WinHTTP. Returns body bytes on success, empty on failure.
-// Follows redirects automatically.
-static std::vector<uint8_t> http_get(const std::wstring& url, int timeout_sec = 30) {
+// Follows redirects automatically. Passes browser-shaped headers because
+// most executor sites 403 the default WinHTTP UA.
+static std::vector<uint8_t> http_get(const std::wstring& url,
+                                     int timeout_sec = 30,
+                                     DWORD* status_out = nullptr) {
+    if (status_out) *status_out = 0;
     std::vector<uint8_t> out;
     std::wstring host, path;
     INTERNET_PORT port;
     bool https;
     if (!parse_url(url, host, path, port, https)) return out;
 
-    HINTERNET hs = WinHttpOpen(L"ROGBLOX-Loader/1.0",
+    HINTERNET hs = WinHttpOpen(
+        L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        L"(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
         WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hs) return out;
@@ -205,9 +216,23 @@ static std::vector<uint8_t> http_get(const std::wstring& url, int timeout_sec = 
         nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
     if (!hr) { WinHttpCloseHandle(hc); WinHttpCloseHandle(hs); return out; }
 
-    if (WinHttpSendRequest(hr, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                           WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+    const wchar_t* hdrs =
+        L"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,"
+        L"image/avif,image/webp,*/*;q=0.8\r\n"
+        L"Accept-Language: en-US,en;q=0.9\r\n"
+        L"Accept-Encoding: identity\r\n"   // we don't decode gzip/brotli
+        L"Upgrade-Insecure-Requests: 1\r\n";
+
+    if (WinHttpSendRequest(hr, hdrs, (DWORD)-1L, WINHTTP_NO_REQUEST_DATA,
+                           0, 0, 0) &&
         WinHttpReceiveResponse(hr, nullptr)) {
+        if (status_out) {
+            DWORD sz = sizeof(DWORD);
+            WinHttpQueryHeaders(hr,
+                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                WINHTTP_HEADER_NAME_BY_INDEX, status_out, &sz,
+                WINHTTP_NO_HEADER_INDEX);
+        }
         DWORD avail = 0;
         while (WinHttpQueryDataAvailable(hr, &avail) && avail > 0) {
             size_t prev = out.size();
@@ -228,7 +253,9 @@ static std::vector<uint8_t> http_get(const std::wstring& url, int timeout_sec = 
 // Downloads a URL straight to a file. Returns true on success and the
 // file is >= 200 KB and looks like a PE binary (MZ magic).
 static bool download_and_validate(const std::wstring& url, const fs::path& dst) {
-    auto bytes = http_get(url, 90);
+    DWORD status = 0;
+    auto bytes = http_get(url, 90, &status);
+    if (status < 200 || status >= 300) return false;
     if (bytes.size() < 200 * 1024) return false;
     if (bytes[0] != 'M' || bytes[1] != 'Z') return false;
     std::ofstream f(dst, std::ios::binary | std::ios::trunc);
@@ -237,27 +264,71 @@ static bool download_and_validate(const std::wstring& url, const fs::path& dst) 
     return (bool)f;
 }
 
-// Scrape the first .exe href on an HTML page. Returns absolute URL or
-// empty on miss.
-static std::wstring scrape_exe_url(const std::wstring& page_url) {
-    auto html_bytes = http_get(page_url, 25);
-    if (html_bytes.empty()) return L"";
+// Returns every plausible .exe URL on a page. Tries multiple patterns
+// (attribute values, JS string literals) because executor sites bury
+// the real download in onclick handlers and JSON blobs, not bare hrefs.
+// Output is de-duplicated and resolved to absolute URLs. Sets cf_blocked
+// to true if the response looks like a Cloudflare challenge page.
+struct ScrapeResult {
+    std::vector<std::wstring> candidates;
+    DWORD                     status      = 0;
+    bool                      cf_blocked  = false;
+    size_t                    bytes       = 0;
+};
+
+static ScrapeResult scrape_exe_candidates(const std::wstring& page_url) {
+    ScrapeResult sr;
+    auto html_bytes = http_get(page_url, 25, &sr.status);
+    sr.bytes = html_bytes.size();
+    if (html_bytes.empty()) return sr;
     std::string html((const char*)html_bytes.data(), html_bytes.size());
-    std::regex re("(?:href|src)=\"([^\"]+\\.exe)\"",
-                  std::regex_constants::icase);
-    std::smatch m;
-    if (!std::regex_search(html, m, re)) return L"";
-    std::string found = m[1].str();
-    std::wstring wfound(found.begin(), found.end());
-    if (wfound.rfind(L"http", 0) == 0) return wfound;
-    // resolve relative URL against the host of page_url
-    std::wstring host, path; INTERNET_PORT port; bool https;
-    if (parse_url(page_url, host, path, port, https)) {
-        std::wstring base = (https ? L"https://" : L"http://") + host;
-        if (wfound[0] != L'/') wfound = L"/" + wfound;
-        return base + wfound;
+
+    // Cloudflare challenge - we can't run their JS, so flag and move on.
+    if (html.find("cf-browser-verification") != std::string::npos ||
+        html.find("cf-challenge") != std::string::npos ||
+        (sr.status == 403 && html.find("cloudflare") != std::string::npos) ||
+        html.find("Just a moment...") != std::string::npos) {
+        sr.cf_blocked = true;
+        return sr;
     }
-    return L"";
+
+    std::regex patterns[] = {
+        std::regex(R"((?:href|src|data-href|data-url|data-link|data-download)\s*=\s*"([^"]+\.exe[^"]*)")",
+                   std::regex::icase),
+        std::regex(R"((?:href|src|data-href|data-url|data-link|data-download)\s*=\s*'([^']+\.exe[^']*)')",
+                   std::regex::icase),
+        std::regex(R"("(https?://[^"]+\.exe[^"]*)")",
+                   std::regex::icase),
+        std::regex(R"('(https?://[^']+\.exe[^']*)')",
+                   std::regex::icase),
+    };
+
+    std::wstring host, path;
+    INTERNET_PORT port; bool https;
+    parse_url(page_url, host, path, port, https);
+    std::wstring base = (https ? L"https://" : L"http://") + host;
+
+    auto push = [&](const std::string& s) {
+        std::wstring w(s.begin(), s.end());
+        if (w.rfind(L"http", 0) == 0) {
+            // absolute, keep
+        } else if (w.rfind(L"//", 0) == 0) {
+            w = std::wstring(L"https:") + w;
+        } else if (!w.empty() && w[0] == L'/') {
+            w = base + w;
+        } else {
+            return; // skip relative non-rooted
+        }
+        for (auto& e : sr.candidates) if (e == w) return;
+        sr.candidates.push_back(w);
+    };
+
+    for (auto& re : patterns) {
+        auto it = std::sregex_iterator(html.begin(), html.end(), re);
+        auto en = std::sregex_iterator();
+        for (; it != en; ++it) push((*it)[1].str());
+    }
+    return sr;
 }
 
 // Best-effort Defender exclusion for a folder. No-op without admin.
@@ -289,59 +360,108 @@ static bool wait_for_folder(const fs::path& p, int seconds) {
     return false;
 }
 
-// Multi-source auto-installer. Tries Solara scraping then a GitHub
-// Releases fallback. Returns the executor name on success.
+// Multi-source auto-installer. Walks a list of executor landing pages,
+// scrapes every .exe candidate, and tries each until one downloads as a
+// valid PE and the installer creates its autoexec folder. Pushes status
+// updates to the UI at every step so the user sees what's happening.
 static std::wstring auto_install_executor() {
     struct Source {
         const wchar_t* name;
-        const wchar_t* scrape_from;  // page to scan for .exe link
-        const wchar_t* github_repo;  // alternative: owner/repo for releases API
-        fs::path       folder;       // where the installer's autoexec lives
+        const wchar_t* page;
+        fs::path       folder;
     };
+    auto LA = []() -> fs::path {
+        wchar_t* p = _wgetenv(L"LOCALAPPDATA");
+        return p ? fs::path(p) : fs::path(L".");
+    };
+    fs::path solara = LA() / L"Solara";
+
     Source sources[] = {
-        {L"Solara", L"https://getsolara.dev/download/", nullptr,
-         fs::path(_wgetenv(L"LOCALAPPDATA") ? _wgetenv(L"LOCALAPPDATA") : L".") / L"Solara"},
-        {L"Solara", L"https://getsolara.gg/download/", nullptr,
-         fs::path(_wgetenv(L"LOCALAPPDATA") ? _wgetenv(L"LOCALAPPDATA") : L".") / L"Solara"},
-        {L"Solara", L"https://solara.dev/", nullptr,
-         fs::path(_wgetenv(L"LOCALAPPDATA") ? _wgetenv(L"LOCALAPPDATA") : L".") / L"Solara"},
+        {L"Solara", L"https://getsolara.dev/",          solara},
+        {L"Solara", L"https://getsolara.dev/download",  solara},
+        {L"Solara", L"https://www.getsolara.dev/",      solara},
+        {L"Solara", L"https://getsolara.gg/",           solara},
+        {L"Solara", L"https://solaraexecutor.com/",     solara},
     };
 
-    fs::path temp_dir = fs::path(_wgetenv(L"TEMP") ? _wgetenv(L"TEMP") : L".") / L"rogblox-installer";
+    fs::path temp_dir = (_wgetenv(L"TEMP") ? fs::path(_wgetenv(L"TEMP"))
+                                            : fs::path(L".")) / L"rogblox-installer";
     std::error_code ec;
     fs::create_directories(temp_dir, ec);
-
-    // Pre-emptive Defender exclusion (best effort)
     add_defender_exclusion(temp_dir.wstring());
 
     for (auto& src : sources) {
         add_defender_exclusion(src.folder.wstring());
-        std::wstring url;
-        if (src.scrape_from) {
-            url = scrape_exe_url(src.scrape_from);
+
+        post_status(L"Fetching " + std::wstring(src.page) + L" ...", ui::WARN);
+        auto sr = scrape_exe_candidates(src.page);
+
+        if (sr.cf_blocked) {
+            post_status(std::wstring(src.page) +
+                        L"\nblocked by Cloudflare challenge - skipping",
+                        ui::WARN);
+            continue;
         }
-        if (url.empty()) continue;
-
-        fs::path installer = temp_dir / (std::wstring(src.name) + L"-installer.exe");
-        if (!download_and_validate(url, installer)) continue;
-
-        // Run the installer with /SILENT and don't wait.
-        SHELLEXECUTEINFOW sei{};
-        sei.cbSize = sizeof(sei);
-        sei.fMask  = SEE_MASK_NOCLOSEPROCESS;
-        sei.lpVerb = L"open";
-        sei.lpFile = installer.c_str();
-        sei.lpParameters = L"/SILENT";
-        sei.nShow = SW_SHOW;
-        if (!ShellExecuteExW(&sei)) continue;
-        if (sei.hProcess) CloseHandle(sei.hProcess);
-
-        // Poll for the executor folder to appear (up to 3 minutes)
-        if (wait_for_folder(src.folder / L"autoexec", 180)) {
-            // Give the installer a couple seconds to finish writing
-            Sleep(2500);
-            return src.name;
+        if (sr.status >= 400) {
+            wchar_t buf[64];
+            wsprintfW(buf, L"HTTP %u", sr.status);
+            post_status(std::wstring(src.page) + L"\nreturned " + buf +
+                        L" - skipping", ui::WARN);
+            continue;
         }
+        if (sr.candidates.empty()) {
+            wchar_t buf[96];
+            wsprintfW(buf, L"%u bytes, no .exe links found", (unsigned)sr.bytes);
+            post_status(std::wstring(src.page) + L"\n" + buf + L" - skipping",
+                        ui::WARN);
+            continue;
+        }
+
+        wchar_t banner[80];
+        wsprintfW(banner, L"Found %u download candidate(s) on %ls",
+                  (unsigned)sr.candidates.size(), src.page);
+        post_status(banner, ui::WARN);
+
+        bool success = false;
+        for (size_t i = 0; i < sr.candidates.size() && !success; ++i) {
+            const std::wstring& url = sr.candidates[i];
+            post_status(L"Downloading\n" + url, ui::WARN);
+
+            fs::path installer = temp_dir /
+                (std::wstring(src.name) + L"-installer.exe");
+            if (!download_and_validate(url, installer)) {
+                post_status(L"Download failed or not a valid .exe\nTrying next candidate...",
+                            ui::WARN);
+                continue;
+            }
+
+            post_status(L"Installer downloaded.\nLaunching - accept the UAC prompt if it appears.",
+                        ui::WARN);
+            SHELLEXECUTEINFOW sei{};
+            sei.cbSize = sizeof(sei);
+            sei.fMask  = SEE_MASK_NOCLOSEPROCESS;
+            sei.lpVerb = L"open";
+            sei.lpFile = installer.c_str();
+            sei.lpParameters = L"/SILENT";
+            sei.nShow = SW_SHOW;
+            if (!ShellExecuteExW(&sei)) {
+                post_status(L"Could not start the installer\n(possibly blocked by Defender / SmartScreen)",
+                            ui::BAD);
+                continue;
+            }
+            if (sei.hProcess) CloseHandle(sei.hProcess);
+
+            post_status(L"Installer running. Waiting up to 3 minutes\nfor the autoexec folder to appear...",
+                        ui::WARN);
+            if (wait_for_folder(src.folder / L"autoexec", 180)) {
+                Sleep(2500);
+                success = true;
+            } else {
+                post_status(L"Installer never created the autoexec folder.\nTrying next candidate...",
+                            ui::WARN);
+            }
+        }
+        if (success) return src.name;
     }
     return L"";
 }
