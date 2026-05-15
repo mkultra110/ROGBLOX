@@ -168,11 +168,15 @@ function M.Build(tab, ctx)
     startNoclip()
     startSpin()
 
+    -- Slider defaults: pass the live state value so the UI matches the
+    -- initial state (instead of a hardcoded number that desyncs).
+    state.Speed = 50
+    state.Jump  = 100
     local speedSec = tab:AddSection("Speed & Jump")
     speedSec:AddToggle("Walkspeed override", false, function(v) state.SpeedEnabled = v; applySpeed() end)
-    speedSec:AddSlider("Walkspeed", 16, 500, 50, function(v) state.Speed = v; applySpeed() end)
+    speedSec:AddSlider("Walkspeed", 16, 500, state.Speed, function(v) state.Speed = v; applySpeed() end)
     speedSec:AddToggle("Jump override", false, function(v) state.JumpEnabled = v; applyJump() end)
-    speedSec:AddSlider("Jump power", 50, 500, 100, function(v) state.Jump = v; applyJump() end)
+    speedSec:AddSlider("Jump power", 50, 500, state.Jump, function(v) state.Jump = v; applyJump() end)
     speedSec:AddToggle("Infinite jump", false, function(v) state.InfJump = v end)
 
     local flySec = tab:AddSection("Fly")

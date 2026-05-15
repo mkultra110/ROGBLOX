@@ -145,7 +145,11 @@ function M.Build(tab, ctx)
     local autoSec = tab:AddSection("Autorun on next inject")
     autoSec:AddButton("Toggle autorun for selected favorite", function()
         if not favPicked or favPicked == "(none)" then return end
-        state.Autorun[favPicked] = not state.Autorun[favPicked] or nil
+        if state.Autorun[favPicked] then
+            state.Autorun[favPicked] = nil
+        else
+            state.Autorun[favPicked] = true
+        end
         saveStore()
         Notify:Send("Scripthub", "Autorun '" .. favPicked .. "' = " ..
             tostring(state.Autorun[favPicked] == true), 3)

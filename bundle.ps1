@@ -54,14 +54,14 @@ $sb = New-Object System.Text.StringBuilder
 foreach ($rel in $Modules) {
     $p = Join-Path $here $rel
     if (-not (Test-Path $p)) { throw "missing module: $rel" }
-    $content = Get-Content -Raw -Path $p
+    $content = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8)
     [void]$sb.AppendLine("_modules['$rel'] = function()")
     [void]$sb.AppendLine($content)
     [void]$sb.AppendLine('end')
     [void]$sb.AppendLine('')
 }
 
-$mainSrc = Get-Content -Raw -Path (Join-Path $here $Main)
+$mainSrc = [System.IO.File]::ReadAllText((Join-Path $here $Main), [System.Text.Encoding]::UTF8)
 # strip main.lua's HttpGet-based fetch; ours is provided above
 $mainSrc = [regex]::Replace(
     $mainSrc,
@@ -74,7 +74,10 @@ $mainSrc = [regex]::Replace(
 $dist = Join-Path $here 'dist'
 if (-not (Test-Path $dist)) { New-Item -ItemType Directory -Path $dist | Out-Null }
 $outLua = Join-Path $dist 'rogblox.lua'
-$sb.ToString() | Set-Content -Path $outLua -Encoding UTF8
+# UTF-8 WITHOUT BOM - PS2EXE chokes on BOM in input scripts, and the
+# bundled .lua is read by Roblox at runtime which prefers no BOM.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($outLua, $sb.ToString(), $utf8NoBom)
 $kb = [Math]::Round((Get-Item $outLua).Length / 1KB, 1)
 Write-Host ("[+] Wrote $outLua ($kb KB, " + ($Modules.Count + 1) + ' files)') -ForegroundColor Green
 
@@ -84,12 +87,12 @@ Write-Host '[*] Injecting bundle into launch-bundled.ps1...' -ForegroundColor Cy
 $bundleBytes = [System.IO.File]::ReadAllBytes($outLua)
 $bundleB64   = [Convert]::ToBase64String($bundleBytes)
 
-$launchSrc = Get-Content -Raw -Path (Join-Path $here 'launch.ps1')
+$launchSrc = [System.IO.File]::ReadAllText((Join-Path $here 'launch.ps1'), [System.Text.Encoding]::UTF8)
 if ($launchSrc -notmatch [regex]::Escape("`$EmbeddedScriptB64 = ''")) {
     throw 'launch.ps1 is missing the $EmbeddedScriptB64 placeholder.'
 }
 $bundled = $launchSrc -replace [regex]::Escape("`$EmbeddedScriptB64 = ''"),
                               ("`$EmbeddedScriptB64 = '" + $bundleB64 + "'")
 $outPs1 = Join-Path $here 'launch-bundled.ps1'
-$bundled | Set-Content -Path $outPs1 -Encoding UTF8
+[System.IO.File]::WriteAllText($outPs1, $bundled, $utf8NoBom)
 Write-Host ("[+] Wrote $outPs1") -ForegroundColor Green

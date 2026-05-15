@@ -75,10 +75,21 @@ end
 
 local function hookSilentAim()
     if hookedSilent then return end
-    if not (hookmetamethod and getrawmetatable) then return end
+    -- Hard requirements: getrawmetatable, getnamecallmethod, newcclosure.
+    -- Without all three we can't safely install the hook on a weaker
+    -- executor; just bail and the SilentAim toggle becomes a no-op.
+    if type(getrawmetatable)   ~= "function" then return end
+    if type(getnamecallmethod) ~= "function" then return end
+    if type(newcclosure)       ~= "function" then
+        -- Fallback: define a passthrough so the code below still
+        -- compiles. Real anti-detection benefit is lost but the hub
+        -- doesn't crash.
+        newcclosure = function(f) return f end
+    end
     hookedSilent = true
 
     local mt = getrawmetatable(game)
+    if not mt then return end
     local oldIndex = mt.__index
     local oldNamecall = mt.__namecall
     if setreadonly then setreadonly(mt, false) end

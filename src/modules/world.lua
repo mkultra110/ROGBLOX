@@ -185,8 +185,27 @@ function M.Build(tab, ctx)
     setupChatLog()
 
     local lightSec = tab:AddSection("Lighting")
-    lightSec:AddToggle("Fullbright", false, function(v) state.Fullbright = v if not v then restore(); saved = nil; snapshot() end end)
-    lightSec:AddToggle("No fog", false, function(v) state.NoFog = v if not v then restore(); saved = nil; snapshot() end end)
+    lightSec:AddToggle("Fullbright", false, function(v)
+        state.Fullbright = v
+        -- When turning off, restore only the lighting properties we
+        -- touched. Don't blanket-restore — that would clobber NoFog,
+        -- LockTime, etc. if they're still on.
+        if not v and saved then
+            Lighting.Ambient        = saved.Ambient
+            Lighting.Brightness     = saved.Bright
+            Lighting.ColorShift_Top = saved.ColorShift_Top
+            Lighting.ColorShift_Bottom = saved.ColorShift_Bottom
+            Lighting.OutdoorAmbient = saved.OutdoorAmbient
+        end
+    end)
+    lightSec:AddToggle("No fog", false, function(v)
+        state.NoFog = v
+        if not v and saved then
+            Lighting.FogEnd   = saved.FogEnd
+            Lighting.FogStart = saved.FogStart
+            Lighting.FogColor = saved.FogColor
+        end
+    end)
     lightSec:AddToggle("Lock time", false, function(v) state.LockTime = v end)
     lightSec:AddSlider("Time of day", 0, 24, 12, function(v) state.TimeOfDay = v end)
     lightSec:AddButton("Restore defaults", function() restore() end)

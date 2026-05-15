@@ -1509,8 +1509,13 @@ end
 -- Helper to wrap a UI component (with :Get / :Set) into a flag.
 function M.BindComponent(name, component)
     M.Register(name, {
-        Get = function() return component.Get and component:Get() or component:Get() end,
-        Set = function(v) if component.Set then component:Set(v) end end,
+        Get = function()
+            if component and component.Get then return component:Get() end
+            return nil
+        end,
+        Set = function(v)
+            if component and component.Set then component:Set(v) end
+        end,
     })
 end
 
@@ -1831,7 +1836,9 @@ end
 -- table with a Position field as the "from".
 function M.HasLOS(from, toPart, ignoreList)
     if not from or not toPart then return false end
-    local origin = (typeof(from) == "Instance" and from.Position) or from.Position
+    local origin
+    if typeof(from) == "Instance" then origin = from.Position
+    elseif type(from) == "table"  then origin = from.Position end
     if not origin then return false end
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
@@ -2636,6 +2643,11 @@ local pool = {}        -- index -> {box, boxOutline, name, dist, weapon, hpBg, h
 local slotByPlayer = {} -- [player] = slot index
 local slotInUse = {}   -- [index] = bool
 
+-- Module-level constants - avoids fresh Vector3.new every frame for
+-- every player. Cuts thousands of allocations per second at full lobby.
+local HEAD_OFFSET = Vector3.new(0, 0.5, 0)
+local FOOT_OFFSET = Vector3.new(0, 3, 0)
+
 local function buildSlot()
     local slot = {}
     slot.boxOutline = newDrawing("Square", {Thickness = 3, Filled = false,
@@ -2793,6 +2805,9 @@ local function updateSlot(plr)
     local slot = pool[idx]
     if not slot then return end
 
+    local cam = Workspace.CurrentCamera
+    if not cam then hideSlot(slot); return end
+
     local lp = Players.LocalPlayer
     local char = plr.Character
     local hum  = char and char:FindFirstChildOfClass("Humanoid")
@@ -2806,15 +2821,14 @@ local function updateSlot(plr)
 
     if not visible then hideSlot(slot); return end
 
-    local cam = Workspace.CurrentCamera
     local distance = (cam.CFrame.Position - hrp.Position).Magnitude
     if distance > state.MaxDist then hideSlot(slot); return end
 
     local rootScreen, onScreen = cam:WorldToViewportPoint(hrp.Position)
     if not onScreen then hideSlot(slot); return end
 
-    local headScreen = cam:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
-    local footPos = hrp.Position - Vector3.new(0, 3, 0)
+    local headScreen = cam:WorldToViewportPoint(head.Position + HEAD_OFFSET)
+    local footPos = hrp.Position - FOOT_OFFSET
     local footScreen = cam:WorldToViewportPoint(footPos)
     local height = math.abs(footScreen.Y - headScreen.Y)
     local width  = height * 0.55
@@ -3087,10 +3101,21 @@ end
 
 local function hookSilentAim()
     if hookedSilent then return end
-    if not (hookmetamethod and getrawmetatable) then return end
+    -- Hard requirements: getrawmetatable, getnamecallmethod, newcclosure.
+    -- Without all three we can't safely install the hook on a weaker
+    -- executor; just bail and the SilentAim toggle becomes a no-op.
+    if type(getrawmetatable)   ~= "function" then return end
+    if type(getnamecallmethod) ~= "function" then return end
+    if type(newcclosure)       ~= "function" then
+        -- Fallback: define a passthrough so the code below still
+        -- compiles. Real anti-detection benefit is lost but the hub
+        -- doesn't crash.
+        newcclosure = function(f) return f end
+    end
     hookedSilent = true
 
     local mt = getrawmetatable(game)
+    if not mt then return end
     local oldIndex = mt.__index
     local oldNamecall = mt.__namecall
     if setreadonly then setreadonly(mt, false) end
@@ -3521,11 +3546,15 @@ function M.Build(tab, ctx)
     startNoclip()
     startSpin()
 
+    -- Slider defaults: pass the live state value so the UI matches the
+    -- initial state (instead of a hardcoded number that desyncs).
+    state.Speed = 50
+    state.Jump  = 100
     local speedSec = tab:AddSection("Speed & Jump")
     speedSec:AddToggle("Walkspeed override", false, function(v) state.SpeedEnabled = v; applySpeed() end)
-    speedSec:AddSlider("Walkspeed", 16, 500, 50, function(v) state.Speed = v; applySpeed() end)
+    speedSec:AddSlider("Walkspeed", 16, 500, state.Speed, function(v) state.Speed = v; applySpeed() end)
     speedSec:AddToggle("Jump override", false, function(v) state.JumpEnabled = v; applyJump() end)
-    speedSec:AddSlider("Jump power", 50, 500, 100, function(v) state.Jump = v; applyJump() end)
+    speedSec:AddSlider("Jump power", 50, 500, state.Jump, function(v) state.Jump = v; applyJump() end)
     speedSec:AddToggle("Infinite jump", false, function(v) state.InfJump = v end)
 
     local flySec = tab:AddSection("Fly")
@@ -4660,8 +4689,27 @@ function M.Build(tab, ctx)
     setupChatLog()
 
     local lightSec = tab:AddSection("Lighting")
-    lightSec:AddToggle("Fullbright", false, function(v) state.Fullbright = v if not v then restore(); saved = nil; snapshot() end end)
-    lightSec:AddToggle("No fog", false, function(v) state.NoFog = v if not v then restore(); saved = nil; snapshot() end end)
+    lightSec:AddToggle("Fullbright", false, function(v)
+        state.Fullbright = v
+        -- When turning off, restore only the lighting properties we
+        -- touched. Don't blanket-restore — that would clobber NoFog,
+        -- LockTime, etc. if they're still on.
+        if not v and saved then
+            Lighting.Ambient        = saved.Ambient
+            Lighting.Brightness     = saved.Bright
+            Lighting.ColorShift_Top = saved.ColorShift_Top
+            Lighting.ColorShift_Bottom = saved.ColorShift_Bottom
+            Lighting.OutdoorAmbient = saved.OutdoorAmbient
+        end
+    end)
+    lightSec:AddToggle("No fog", false, function(v)
+        state.NoFog = v
+        if not v and saved then
+            Lighting.FogEnd   = saved.FogEnd
+            Lighting.FogStart = saved.FogStart
+            Lighting.FogColor = saved.FogColor
+        end
+    end)
     lightSec:AddToggle("Lock time", false, function(v) state.LockTime = v end)
     lightSec:AddSlider("Time of day", 0, 24, 12, function(v) state.TimeOfDay = v end)
     lightSec:AddButton("Restore defaults", function() restore() end)
@@ -5409,12 +5457,7 @@ local function buildStrucid(tab)
             end
         end
     end)
-    sec:AddToggle("Auto-build wall under target", false, function(v)
-        -- Strucid wall placement varies per version; this is a stub.
-        if v then
-            Players.LocalPlayer:Kick("[stub] auto-build not implemented")
-        end
-    end)
+    sec:AddLabel("Auto-build wall: not implemented in this version (varies per Strucid build).")
 end
 
 -- ---------- Game: Bad Business ----------
@@ -5713,13 +5756,28 @@ function M.Build(tab, ctx)
     elseif category == "AnimeRPG"     then buildAnimeRPGCategory(tab)
     end
 
-    -- Manual override
+    -- Manual override. Re-picking disconnects any active connections
+    -- the previous template registered so we don't leak Heartbeat
+    -- listeners every time the user changes their mind.
+    local function clearTemplateConns()
+        local keep = {}
+        for k, c in pairs(conns) do
+            if k == "uniHB" then        -- universal features stay
+                keep[k] = c
+            else
+                if c and c.Disconnect then pcall(function() c:Disconnect() end) end
+            end
+        end
+        conns = keep
+    end
+
     local override = tab:AddSection("Override Template")
     override:AddDropdown("Force-load template",
         {"None","Shooter","BattleRoyale","KnifeRound","OpenWorld","Sim","AnimeRPG",
          "Da Hood","Blox Fruits","Arsenal","Phantom Forces","Murder Mystery 2","KAT","Jailbreak","Pet Simulator X",
          "Counter Blox","Strucid","Bad Business","Prison Life","Adopt Me","Brookhaven"},
         "None", function(v)
+        clearTemplateConns()
         if     v == "Shooter"          then buildShooterCategory(tab)
         elseif v == "BattleRoyale"     then buildBattleRoyaleCategory(tab)
         elseif v == "KnifeRound"       then buildKnifeRoundCategory(tab)
@@ -6513,7 +6571,11 @@ function M.Build(tab, ctx)
     local autoSec = tab:AddSection("Autorun on next inject")
     autoSec:AddButton("Toggle autorun for selected favorite", function()
         if not favPicked or favPicked == "(none)" then return end
-        state.Autorun[favPicked] = not state.Autorun[favPicked] or nil
+        if state.Autorun[favPicked] then
+            state.Autorun[favPicked] = nil
+        else
+            state.Autorun[favPicked] = true
+        end
         saveStore()
         Notify:Send("Scripthub", "Autorun '" .. favPicked .. "' = " ..
             tostring(state.Autorun[favPicked] == true), 3)

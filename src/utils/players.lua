@@ -58,7 +58,9 @@ end
 -- table with a Position field as the "from".
 function M.HasLOS(from, toPart, ignoreList)
     if not from or not toPart then return false end
-    local origin = (typeof(from) == "Instance" and from.Position) or from.Position
+    local origin
+    if typeof(from) == "Instance" then origin = from.Position
+    elseif type(from) == "table"  then origin = from.Position end
     if not origin then return false end
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude

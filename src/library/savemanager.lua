@@ -191,8 +191,13 @@ end
 -- Helper to wrap a UI component (with :Get / :Set) into a flag.
 function M.BindComponent(name, component)
     M.Register(name, {
-        Get = function() return component.Get and component:Get() or component:Get() end,
-        Set = function(v) if component.Set then component:Set(v) end end,
+        Get = function()
+            if component and component.Get then return component:Get() end
+            return nil
+        end,
+        Set = function(v)
+            if component and component.Set then component:Set(v) end
+        end,
     })
 end
 

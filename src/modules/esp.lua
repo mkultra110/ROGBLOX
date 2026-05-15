@@ -79,6 +79,11 @@ local pool = {}        -- index -> {box, boxOutline, name, dist, weapon, hpBg, h
 local slotByPlayer = {} -- [player] = slot index
 local slotInUse = {}   -- [index] = bool
 
+-- Module-level constants - avoids fresh Vector3.new every frame for
+-- every player. Cuts thousands of allocations per second at full lobby.
+local HEAD_OFFSET = Vector3.new(0, 0.5, 0)
+local FOOT_OFFSET = Vector3.new(0, 3, 0)
+
 local function buildSlot()
     local slot = {}
     slot.boxOutline = newDrawing("Square", {Thickness = 3, Filled = false,
@@ -236,6 +241,9 @@ local function updateSlot(plr)
     local slot = pool[idx]
     if not slot then return end
 
+    local cam = Workspace.CurrentCamera
+    if not cam then hideSlot(slot); return end
+
     local lp = Players.LocalPlayer
     local char = plr.Character
     local hum  = char and char:FindFirstChildOfClass("Humanoid")
@@ -249,15 +257,14 @@ local function updateSlot(plr)
 
     if not visible then hideSlot(slot); return end
 
-    local cam = Workspace.CurrentCamera
     local distance = (cam.CFrame.Position - hrp.Position).Magnitude
     if distance > state.MaxDist then hideSlot(slot); return end
 
     local rootScreen, onScreen = cam:WorldToViewportPoint(hrp.Position)
     if not onScreen then hideSlot(slot); return end
 
-    local headScreen = cam:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
-    local footPos = hrp.Position - Vector3.new(0, 3, 0)
+    local headScreen = cam:WorldToViewportPoint(head.Position + HEAD_OFFSET)
+    local footPos = hrp.Position - FOOT_OFFSET
     local footScreen = cam:WorldToViewportPoint(footPos)
     local height = math.abs(footScreen.Y - headScreen.Y)
     local width  = height * 0.55

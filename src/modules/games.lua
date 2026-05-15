@@ -567,12 +567,7 @@ local function buildStrucid(tab)
             end
         end
     end)
-    sec:AddToggle("Auto-build wall under target", false, function(v)
-        -- Strucid wall placement varies per version; this is a stub.
-        if v then
-            Players.LocalPlayer:Kick("[stub] auto-build not implemented")
-        end
-    end)
+    sec:AddLabel("Auto-build wall: not implemented in this version (varies per Strucid build).")
 end
 
 -- ---------- Game: Bad Business ----------
@@ -871,13 +866,28 @@ function M.Build(tab, ctx)
     elseif category == "AnimeRPG"     then buildAnimeRPGCategory(tab)
     end
 
-    -- Manual override
+    -- Manual override. Re-picking disconnects any active connections
+    -- the previous template registered so we don't leak Heartbeat
+    -- listeners every time the user changes their mind.
+    local function clearTemplateConns()
+        local keep = {}
+        for k, c in pairs(conns) do
+            if k == "uniHB" then        -- universal features stay
+                keep[k] = c
+            else
+                if c and c.Disconnect then pcall(function() c:Disconnect() end) end
+            end
+        end
+        conns = keep
+    end
+
     local override = tab:AddSection("Override Template")
     override:AddDropdown("Force-load template",
         {"None","Shooter","BattleRoyale","KnifeRound","OpenWorld","Sim","AnimeRPG",
          "Da Hood","Blox Fruits","Arsenal","Phantom Forces","Murder Mystery 2","KAT","Jailbreak","Pet Simulator X",
          "Counter Blox","Strucid","Bad Business","Prison Life","Adopt Me","Brookhaven"},
         "None", function(v)
+        clearTemplateConns()
         if     v == "Shooter"          then buildShooterCategory(tab)
         elseif v == "BattleRoyale"     then buildBattleRoyaleCategory(tab)
         elseif v == "KnifeRound"       then buildKnifeRoundCategory(tab)
