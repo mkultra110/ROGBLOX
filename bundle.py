@@ -23,6 +23,7 @@ MODULES = [
     "src/config.lua",
     "src/utils/players.lua",
     "src/utils/drawing.lua",
+    "src/utils/env.lua",
     "src/modules/aimbot.lua",
     "src/modules/esp.lua",
     "src/modules/combat_extras.lua",

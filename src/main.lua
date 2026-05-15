@@ -24,6 +24,7 @@ local Config   = fetch("src/config.lua")
 -- shared utilities
 local PlayersUtil = fetch("src/utils/players.lua")
 local Drawing     = fetch("src/utils/drawing.lua")
+local Env         = fetch("src/utils/env.lua")
 
 -- feature modules
 local Aimbot     = fetch("src/modules/aimbot.lua")
@@ -53,6 +54,7 @@ local ctx = {
     Config   = Config,
     Players  = PlayersUtil,
     Drawing  = Drawing,
+    Env      = Env,
     Aimbot   = Aimbot,
 }
 
