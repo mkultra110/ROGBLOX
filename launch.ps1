@@ -1,62 +1,42 @@
-# ROGBLOX launcher for Windows
-# - Detects installed Roblox executors
-# - Drops the autoexecute loader into each one's AutoExecute folder
-# - Copies the loader one-liner to the clipboard
-# - Optionally launches Roblox
+# ROGBLOX loader (Windows GUI)
+# One window, one button: "Load and Launch Roblox".
+# Click it -> installs the cheat into every detected executor's
+# AutoExecute folder, then launches Roblox.
 
-[CmdletBinding()]
-param(
-    [string]$Branch = 'main',
-    [string]$PlaceId,
-    [switch]$LaunchRoblox,
-    [switch]$NoInstall
-)
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
-$ErrorActionPreference = 'Stop'
 $Repo = 'mkultra110/rogblox'
+$Branch = 'main'
 $RawBase = "https://raw.githubusercontent.com/$Repo/$Branch"
 $Loader = 'loadstring(game:HttpGet("' + $RawBase + '/src/main.lua"))()'
 
-function Write-Banner {
-    Write-Host ""
-    Write-Host "  ____   ___   ____ ____  _     _____  __" -ForegroundColor Magenta
-    Write-Host " |  _ \ / _ \ / ___| __ )| |   / _ \ \/ /" -ForegroundColor Magenta
-    Write-Host " | |_) | | | | |  _|  _ \| |  | | | \  / " -ForegroundColor Magenta
-    Write-Host " |  _ <| |_| | |_| | |_) | |__| |_| /  \ " -ForegroundColor Magenta
-    Write-Host " |_| \_\\___/ \____|____/|_____\___/_/\_\" -ForegroundColor Magenta
-    Write-Host ""
-    Write-Host "   Roblox cheat hub  -  $Branch" -ForegroundColor DarkGray
-    Write-Host ""
-}
-
 function Get-ExecutorPaths {
-    $local = $env:LOCALAPPDATA
-    $roaming = $env:APPDATA
-    $userprofile = $env:USERPROFILE
-
+    $l = $env:LOCALAPPDATA
+    $r = $env:APPDATA
+    $u = $env:USERPROFILE
     @(
-        @{ Name = 'Synapse X';        Path = "$local\Synapse X\autoexec" }
-        @{ Name = 'Synapse V3';       Path = "$local\Synapse\autoexec" }
-        @{ Name = 'Wave';             Path = "$local\Wave\autoexec" }
-        @{ Name = 'Wave (Roaming)';   Path = "$roaming\Wave\AutoExecute" }
-        @{ Name = 'Krnl';             Path = "$local\Krnl\autoexec" }
-        @{ Name = 'Krnl (Roaming)';   Path = "$roaming\Krnl\autoexec" }
-        @{ Name = 'Fluxus';           Path = "$local\Fluxus\autoexec" }
-        @{ Name = 'Fluxus (Roaming)'; Path = "$roaming\Fluxus\autoexec" }
-        @{ Name = 'Script-Ware';      Path = "$local\Script-Ware\Roblox\autoexec" }
-        @{ Name = 'Solara';           Path = "$local\Solara\autoexec" }
-        @{ Name = 'Solara (Roaming)'; Path = "$roaming\Solara\autoexec" }
-        @{ Name = 'AWP.gg';           Path = "$local\AWP\autoexec" }
-        @{ Name = 'Xeno';             Path = "$local\Xeno\autoexec" }
-        @{ Name = 'Hydrogen';         Path = "$userprofile\Hydrogen\autoexec" }
-        @{ Name = 'Delta';            Path = "$local\Delta\autoexec" }
-        @{ Name = 'CelerNB';          Path = "$local\CelerNB\autoexec" }
+        @{ Name='Synapse X';        Path="$l\Synapse X\autoexec" }
+        @{ Name='Synapse';          Path="$l\Synapse\autoexec" }
+        @{ Name='Wave';             Path="$l\Wave\autoexec" }
+        @{ Name='Wave (Roaming)';   Path="$r\Wave\AutoExecute" }
+        @{ Name='Krnl';             Path="$l\Krnl\autoexec" }
+        @{ Name='Krnl (Roaming)';   Path="$r\Krnl\autoexec" }
+        @{ Name='Fluxus';           Path="$l\Fluxus\autoexec" }
+        @{ Name='Fluxus (Roaming)'; Path="$r\Fluxus\autoexec" }
+        @{ Name='Script-Ware';      Path="$l\Script-Ware\Roblox\autoexec" }
+        @{ Name='Solara';           Path="$l\Solara\autoexec" }
+        @{ Name='Solara (Roaming)'; Path="$r\Solara\autoexec" }
+        @{ Name='AWP.gg';           Path="$l\AWP\autoexec" }
+        @{ Name='Xeno';             Path="$l\Xeno\autoexec" }
+        @{ Name='Hydrogen';         Path="$u\Hydrogen\autoexec" }
+        @{ Name='Delta';            Path="$l\Delta\autoexec" }
+        @{ Name='CelerNB';          Path="$l\CelerNB\autoexec" }
     )
 }
 
-function Install-Autoexec {
-    Write-Host "[*] Searching for installed executors..." -ForegroundColor Cyan
-    $found = 0
+function Install-Cheat {
+    $installed = @()
     foreach ($exe in Get-ExecutorPaths) {
         $parent = Split-Path $exe.Path -Parent
         if (Test-Path $parent) {
@@ -66,77 +46,99 @@ function Install-Autoexec {
                 }
                 $target = Join-Path $exe.Path 'rogblox.lua'
                 Set-Content -Path $target -Value $Loader -Encoding UTF8
-                Write-Host "    [+] $($exe.Name) -> $target" -ForegroundColor Green
-                $found++
-            } catch {
-                Write-Host "    [!] $($exe.Name) failed: $_" -ForegroundColor DarkYellow
-            }
+                $installed += $exe.Name
+            } catch {}
         }
     }
-    if ($found -eq 0) {
-        Write-Host "[!] No executor folders detected." -ForegroundColor Yellow
-        Write-Host "    Paste the loader manually (it's on your clipboard)." -ForegroundColor Yellow
-    } else {
-        Write-Host "[*] Installed autoexec to $found executor(s)." -ForegroundColor Green
-    }
-}
-
-function Copy-Loader {
-    try {
-        Set-Clipboard -Value $Loader
-        Write-Host "[*] Loader copied to clipboard:" -ForegroundColor Cyan
-        Write-Host "    $Loader" -ForegroundColor DarkGray
-    } catch {
-        Write-Host "[!] Could not copy to clipboard: $_" -ForegroundColor Yellow
-        Write-Host "    $Loader"
-    }
-}
-
-function Test-Loader {
-    Write-Host "[*] Verifying loader URL is reachable..." -ForegroundColor Cyan
-    try {
-        $resp = Invoke-WebRequest -UseBasicParsing -Uri "$RawBase/src/main.lua" -TimeoutSec 10 -Method Head
-        if ($resp.StatusCode -eq 200) {
-            Write-Host "    [+] OK ($($resp.StatusCode))" -ForegroundColor Green
-        } else {
-            Write-Host "    [!] HTTP $($resp.StatusCode)" -ForegroundColor Yellow
-        }
-    } catch {
-        Write-Host "    [!] Cannot reach $RawBase/src/main.lua" -ForegroundColor Yellow
-        Write-Host "        ($_)" -ForegroundColor DarkGray
-        Write-Host "    The repo may not be public yet, or this branch may not exist on origin." -ForegroundColor DarkGray
-    }
+    return $installed
 }
 
 function Start-Roblox {
-    param([string]$PlaceId)
-    Write-Host "[*] Launching Roblox..." -ForegroundColor Cyan
-    if ($PlaceId) {
-        $url = "roblox://placeId=$PlaceId"
-        Start-Process $url
-    } else {
-        Start-Process "roblox-player:1+launchmode:play"
+    try {
+        Start-Process "roblox-player:1+launchmode:play" -ErrorAction Stop
+        return $true
+    } catch {
+        try {
+            Start-Process "roblox://" -ErrorAction Stop
+            return $true
+        } catch {
+            return $false
+        }
     }
 }
 
-Write-Banner
+# ---------- UI ----------
 
-if (-not $NoInstall) { Install-Autoexec }
-Copy-Loader
-Test-Loader
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "ROGBLOX Loader"
+$form.Size = New-Object System.Drawing.Size(420, 280)
+$form.StartPosition = "CenterScreen"
+$form.FormBorderStyle = "FixedDialog"
+$form.MaximizeBox = $false
+$form.BackColor = [System.Drawing.Color]::FromArgb(20, 20, 24)
+$form.ForeColor = [System.Drawing.Color]::FromArgb(230, 230, 235)
+$form.Font = New-Object System.Drawing.Font("Segoe UI", 10)
 
-if ($LaunchRoblox -or $PlaceId) {
-    Start-Roblox -PlaceId $PlaceId
-}
+$title = New-Object System.Windows.Forms.Label
+$title.Text = "ROGBLOX"
+$title.Font = New-Object System.Drawing.Font("Segoe UI", 18, [System.Drawing.FontStyle]::Bold)
+$title.ForeColor = [System.Drawing.Color]::FromArgb(180, 150, 255)
+$title.Location = New-Object System.Drawing.Point(20, 16)
+$title.Size = New-Object System.Drawing.Size(380, 32)
+$form.Controls.Add($title)
 
-Write-Host ""
-Write-Host "Ready. Inject your executor on a running Roblox client - the script" -ForegroundColor White
-Write-Host "will autoexec on next attach, or you can paste from the clipboard." -ForegroundColor White
-Write-Host ""
-Write-Host "Usage:" -ForegroundColor DarkGray
-Write-Host "    .\launch.ps1                          (install autoexec + copy loader)" -ForegroundColor DarkGray
-Write-Host "    .\launch.ps1 -LaunchRoblox            (also start Roblox)" -ForegroundColor DarkGray
-Write-Host "    .\launch.ps1 -PlaceId 1818            (start a specific game)" -ForegroundColor DarkGray
-Write-Host "    .\launch.ps1 -Branch dev              (use a different repo branch)" -ForegroundColor DarkGray
-Write-Host "    .\launch.ps1 -NoInstall               (clipboard only)" -ForegroundColor DarkGray
-Write-Host ""
+$subtitle = New-Object System.Windows.Forms.Label
+$subtitle.Text = "Roblox cheat hub - one click install"
+$subtitle.ForeColor = [System.Drawing.Color]::FromArgb(150, 150, 160)
+$subtitle.Location = New-Object System.Drawing.Point(20, 52)
+$subtitle.Size = New-Object System.Drawing.Size(380, 18)
+$form.Controls.Add($subtitle)
+
+$button = New-Object System.Windows.Forms.Button
+$button.Text = "Load and Launch Roblox"
+$button.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
+$button.Location = New-Object System.Drawing.Point(20, 90)
+$button.Size = New-Object System.Drawing.Size(360, 50)
+$button.BackColor = [System.Drawing.Color]::FromArgb(120, 90, 220)
+$button.ForeColor = [System.Drawing.Color]::White
+$button.FlatStyle = "Flat"
+$button.FlatAppearance.BorderSize = 0
+$button.Cursor = [System.Windows.Forms.Cursors]::Hand
+$form.Controls.Add($button)
+
+$status = New-Object System.Windows.Forms.Label
+$status.Text = "Ready."
+$status.ForeColor = [System.Drawing.Color]::FromArgb(150, 150, 160)
+$status.Location = New-Object System.Drawing.Point(20, 156)
+$status.Size = New-Object System.Drawing.Size(360, 60)
+$status.TextAlign = "TopLeft"
+$form.Controls.Add($status)
+
+$button.Add_Click({
+    $button.Enabled = $false
+    $status.ForeColor = [System.Drawing.Color]::FromArgb(150, 150, 160)
+    $status.Text = "Installing cheat into executor autoexec folders..."
+    $form.Refresh()
+
+    $installed = Install-Cheat
+    try { Set-Clipboard -Value $Loader } catch {}
+
+    if ($installed.Count -gt 0) {
+        $status.ForeColor = [System.Drawing.Color]::FromArgb(120, 220, 140)
+        $status.Text = "Installed to: " + ($installed -join ', ') + ".`nLoader copied to clipboard. Launching Roblox..."
+    } else {
+        $status.ForeColor = [System.Drawing.Color]::FromArgb(230, 180, 80)
+        $status.Text = "No executor folders detected.`nLoader copied to clipboard - paste it manually. Launching Roblox..."
+    }
+    $form.Refresh()
+
+    Start-Sleep -Milliseconds 600
+    $ok = Start-Roblox
+    if (-not $ok) {
+        $status.ForeColor = [System.Drawing.Color]::FromArgb(230, 90, 90)
+        $status.Text = "Could not launch Roblox. Open it manually."
+    }
+    $button.Enabled = $true
+})
+
+[void]$form.ShowDialog()
