@@ -17,10 +17,11 @@ local function fetch(path)
 end
 
 -- libraries first
-local UI          = fetch("src/library/ui.lua")
-local Notify      = fetch("src/library/notify.lua")
-local SaveManager = fetch("src/library/savemanager.lua")
-local Config      = fetch("src/config.lua")
+local UI           = fetch("src/library/ui.lua")
+local Notify       = fetch("src/library/notify.lua")
+local SaveManager  = fetch("src/library/savemanager.lua")
+local ThemeManager = fetch("src/library/thememanager.lua")
+local Config       = fetch("src/config.lua")
 
 -- shared utilities
 local PlayersUtil = fetch("src/utils/players.lua")
@@ -39,6 +40,9 @@ local Farm       = fetch("src/modules/autofarm.lua")
 local Games      = fetch("src/modules/games.lua")
 local PlayerList = fetch("src/modules/playerlist.lua")
 local Console    = fetch("src/modules/console.lua")
+local Scripthub  = fetch("src/modules/scripthub.lua")
+local Stats      = fetch("src/modules/stats.lua")
+local Macro      = fetch("src/modules/macro.lua")
 local Misc       = fetch("src/modules/misc.lua")
 
 local Window = UI:CreateWindow({
@@ -72,6 +76,9 @@ Farm.Build(      Window:AddTab("Auto"),       ctx)
 Games.Build(     Window:AddTab("Games"),      ctx)
 PlayerList.Build(Window:AddTab("Players"),    ctx)
 Console.Build(   Window:AddTab("Console"),    ctx)
+Scripthub.Build( Window:AddTab("Scripthub"),  ctx)
+Stats.Build(     Window:AddTab("Stats"),      ctx)
+Macro.Build(     Window:AddTab("Macro"),      ctx)
 Misc.Build(      Window:AddTab("Misc"),       ctx)
 
 local SettingsTab = Window:AddTab("Settings")
@@ -90,6 +97,9 @@ cfgSection:AddButton("Reset", function()
 end)
 
 local themeSection = SettingsTab:AddSection("Theme")
+themeSection:AddDropdown("Theme preset", ThemeManager.Names(), "Default", function(name)
+    ThemeManager.Apply(UI, Window, name)
+end)
 themeSection:AddColorPicker("Accent color", UI.Theme.Accent, function(c) Window:SetAccent(c) end)
 
 local profilesSection = SettingsTab:AddSection("Profiles (named configs)")
@@ -141,10 +151,13 @@ _G.ROGBLOX = {
         Games      = Games,
         PlayerList = PlayerList,
         Console    = Console,
+        Scripthub  = Scripthub,
+        Stats      = Stats,
+        Macro      = Macro,
         Misc       = Misc,
     },
     Unload = function()
-        for _, mod in ipairs({Aimbot, ESP, Combat, Movement, Teleport, HUD, World, Farm, Games, PlayerList, Console, Misc}) do
+        for _, mod in ipairs({Aimbot, ESP, Combat, Movement, Teleport, HUD, World, Farm, Games, PlayerList, Console, Scripthub, Stats, Macro, Misc}) do
             if mod.Unload then pcall(mod.Unload) end
         end
         Window:Destroy()

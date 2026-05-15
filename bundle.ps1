@@ -10,6 +10,7 @@ $Modules = @(
     'src/library/ui.lua',
     'src/library/notify.lua',
     'src/library/savemanager.lua',
+    'src/library/thememanager.lua',
     'src/config.lua',
     'src/utils/players.lua',
     'src/utils/drawing.lua',
@@ -22,6 +23,12 @@ $Modules = @(
     'src/modules/hud.lua',
     'src/modules/world.lua',
     'src/modules/autofarm.lua',
+    'src/modules/games.lua',
+    'src/modules/playerlist.lua',
+    'src/modules/console.lua',
+    'src/modules/scripthub.lua',
+    'src/modules/stats.lua',
+    'src/modules/macro.lua',
     'src/modules/misc.lua'
 )
 $Main = 'src/main.lua'

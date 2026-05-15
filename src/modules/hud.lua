@@ -22,6 +22,7 @@ local state = {
     TargetPanel    = true,
     OffscreenArrows= false,
     KeyOverlay     = false,
+    Keys           = {},        -- [label] = "KeyName"
 }
 
 local conns = {}
@@ -293,6 +294,84 @@ local function updateTargetPanel()
 end
 
 -- ============================================================
+-- Keybind overlay
+-- ============================================================
+
+local keyPanel, keyList
+
+local function buildKeyOverlay(gui)
+    if keyPanel then return end
+    keyPanel = Instance.new("Frame")
+    keyPanel.Name = "Keybinds"
+    keyPanel.AnchorPoint = Vector2.new(1, 0)
+    keyPanel.Position = UDim2.new(1, -12, 0, 40)
+    keyPanel.Size = UDim2.new(0, 180, 0, 0)
+    keyPanel.AutomaticSize = Enum.AutomaticSize.Y
+    keyPanel.BackgroundColor3 = THEME.Bg
+    keyPanel.BackgroundTransparency = 0.2
+    keyPanel.BorderSizePixel = 0
+    keyPanel.Visible = false
+    keyPanel.Parent = gui
+    Instance.new("UICorner", keyPanel).CornerRadius = UDim.new(0, 6)
+    local s = Instance.new("UIStroke"); s.Color = THEME.Accent; s.Thickness = 1; s.Parent = keyPanel
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, 0, 0, 18)
+    title.Font = Enum.Font.GothamBold
+    title.Text = "  hotkeys"
+    title.TextColor3 = THEME.Text
+    title.TextSize = 11
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = keyPanel
+
+    keyList = Instance.new("Frame")
+    keyList.BackgroundTransparency = 1
+    keyList.Position = UDim2.new(0, 0, 0, 20)
+    keyList.Size = UDim2.new(1, 0, 0, 0)
+    keyList.AutomaticSize = Enum.AutomaticSize.Y
+    keyList.Parent = keyPanel
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 1)
+    layout.Parent = keyList
+    local pad = Instance.new("UIPadding")
+    pad.PaddingLeft = UDim.new(0, 10); pad.PaddingRight = UDim.new(0, 10)
+    pad.PaddingBottom = UDim.new(0, 6)
+    pad.Parent = keyList
+end
+
+local function refreshKeyOverlay()
+    if not keyPanel then return end
+    keyPanel.Visible = state.KeyOverlay
+    if not state.KeyOverlay then return end
+    for _, c in ipairs(keyList:GetChildren()) do
+        if c:IsA("TextLabel") then c:Destroy() end
+    end
+    for label, key in pairs(state.Keys) do
+        local row = Instance.new("TextLabel")
+        row.BackgroundTransparency = 1
+        row.Size = UDim2.new(1, 0, 0, 13)
+        row.Font = Enum.Font.Code
+        row.TextSize = 10
+        row.TextColor3 = THEME.Sub
+        row.TextXAlignment = Enum.TextXAlignment.Left
+        row.Text = string.format("[%s] %s", key, label)
+        row.Parent = keyList
+    end
+end
+
+function M.RegisterKey(label, key)
+    state.Keys[label] = tostring(key)
+    refreshKeyOverlay()
+end
+
+function M.UnregisterKey(label)
+    state.Keys[label] = nil
+    refreshKeyOverlay()
+end
+
+-- ============================================================
 -- Off-screen arrows
 -- ============================================================
 
@@ -391,6 +470,18 @@ function M.Build(tab, ctx)
 
     local oa = tab:AddSection("Off-screen Arrows")
     oa:AddToggle("Enabled", false, function(v) state.OffscreenArrows = v end)
+
+    -- ----- Keybind overlay -----
+    buildKeyOverlay(gui)
+    local kb = tab:AddSection("Keybind Overlay")
+    kb:AddToggle("Show active hotkeys (top-right)", false, function(v)
+        state.KeyOverlay = v
+        refreshKeyOverlay()
+    end)
+    kb:AddLabel("Default bindings shown below; modules add their own as they boot.")
+    M.RegisterKey("Toggle UI", "RightCtrl")
+    M.RegisterKey("Console", "Backquote")
+    M.RegisterKey("Freecam", "RightShift")
 
     conns.render = RunService.RenderStepped:Connect(function()
         updateWatermark()

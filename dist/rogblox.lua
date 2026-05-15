@@ -1328,6 +1328,150 @@ return M
 
 end
 
+_modules['src/library/thememanager.lua'] = function()
+--[[
+    ThemeManager addon.
+
+    Bundle of named theme presets. Apply() swaps the UI library's THEME
+    table values and pushes accent updates to any active window. Full
+    re-tint of every existing instance happens via UI's own
+    UpdateColorsUsingRegistry() pipeline once that's wired (see todo
+    for UI v3); for now Apply lights up new components in the new
+    colors and updates the accent strip live on existing windows.
+]]
+
+local M = {}
+
+M.Themes = {
+    Default = {
+        Background   = Color3.fromRGB(16,  16,  22),
+        Panel        = Color3.fromRGB(22,  22,  30),
+        Panel2       = Color3.fromRGB(28,  28,  38),
+        Element      = Color3.fromRGB(36,  36,  48),
+        ElementHover = Color3.fromRGB(48,  48,  62),
+        Accent       = Color3.fromRGB(140, 100, 255),
+        AccentDim    = Color3.fromRGB( 90,  60, 180),
+        AccentSoft   = Color3.fromRGB(180, 150, 255),
+        Text         = Color3.fromRGB(235, 235, 245),
+        SubText      = Color3.fromRGB(150, 150, 165),
+        DimText      = Color3.fromRGB(110, 110, 125),
+        Stroke       = Color3.fromRGB(50,   50,  62),
+        Good         = Color3.fromRGB( 90, 220, 140),
+        Warn         = Color3.fromRGB(255, 200,  80),
+        Bad          = Color3.fromRGB(235,  90, 100),
+    },
+    Ocean = {
+        Background   = Color3.fromRGB(8,   16,  28),
+        Panel        = Color3.fromRGB(14,  24,  40),
+        Panel2       = Color3.fromRGB(20,  32,  54),
+        Element      = Color3.fromRGB(26,  42,  68),
+        ElementHover = Color3.fromRGB(36,  54,  86),
+        Accent       = Color3.fromRGB(74,  202, 255),
+        AccentDim    = Color3.fromRGB(40,  130, 200),
+        AccentSoft   = Color3.fromRGB(150, 220, 255),
+        Text         = Color3.fromRGB(232, 240, 250),
+        SubText      = Color3.fromRGB(140, 160, 185),
+        DimText      = Color3.fromRGB(100, 120, 145),
+        Stroke       = Color3.fromRGB(40,  60,  90),
+        Good         = Color3.fromRGB(110, 220, 180),
+        Warn         = Color3.fromRGB(255, 200,  80),
+        Bad          = Color3.fromRGB(255,  90, 130),
+    },
+    Amber = {
+        Background   = Color3.fromRGB(20,  16,  10),
+        Panel        = Color3.fromRGB(28,  22,  14),
+        Panel2       = Color3.fromRGB(36,  28,  16),
+        Element      = Color3.fromRGB(44,  34,  20),
+        ElementHover = Color3.fromRGB(54,  42,  24),
+        Accent       = Color3.fromRGB(255, 170,  60),
+        AccentDim    = Color3.fromRGB(200, 120,  30),
+        AccentSoft   = Color3.fromRGB(255, 220, 130),
+        Text         = Color3.fromRGB(248, 240, 220),
+        SubText      = Color3.fromRGB(180, 160, 130),
+        DimText      = Color3.fromRGB(120, 105,  80),
+        Stroke       = Color3.fromRGB(80,   60,  35),
+        Good         = Color3.fromRGB(180, 220, 130),
+        Warn         = Color3.fromRGB(255, 200,  80),
+        Bad          = Color3.fromRGB(255, 100,  90),
+    },
+    Mint = {
+        Background   = Color3.fromRGB(10,  22,  18),
+        Panel        = Color3.fromRGB(16,  30,  26),
+        Panel2       = Color3.fromRGB(22,  40,  34),
+        Element      = Color3.fromRGB(30,  50,  42),
+        ElementHover = Color3.fromRGB(40,  64,  54),
+        Accent       = Color3.fromRGB(80,  240, 180),
+        AccentDim    = Color3.fromRGB(40,  170, 120),
+        AccentSoft   = Color3.fromRGB(160, 250, 215),
+        Text         = Color3.fromRGB(230, 245, 240),
+        SubText      = Color3.fromRGB(140, 175, 165),
+        DimText      = Color3.fromRGB(100, 130, 120),
+        Stroke       = Color3.fromRGB(40,  70,  60),
+        Good         = Color3.fromRGB(100, 240, 170),
+        Warn         = Color3.fromRGB(255, 200,  80),
+        Bad          = Color3.fromRGB(255,  90, 120),
+    },
+    Rose = {
+        Background   = Color3.fromRGB(22,  12,  18),
+        Panel        = Color3.fromRGB(32,  18,  26),
+        Panel2       = Color3.fromRGB(42,  24,  34),
+        Element      = Color3.fromRGB(52,  30,  42),
+        ElementHover = Color3.fromRGB(64,  38,  52),
+        Accent       = Color3.fromRGB(255, 110, 170),
+        AccentDim    = Color3.fromRGB(200, 70,  130),
+        AccentSoft   = Color3.fromRGB(255, 170, 210),
+        Text         = Color3.fromRGB(248, 232, 240),
+        SubText      = Color3.fromRGB(190, 150, 175),
+        DimText      = Color3.fromRGB(130, 100, 120),
+        Stroke       = Color3.fromRGB(85,  50,  70),
+        Good         = Color3.fromRGB(140, 230, 170),
+        Warn         = Color3.fromRGB(255, 210,  90),
+        Bad          = Color3.fromRGB(255, 100, 120),
+    },
+    LightMode = {
+        Background   = Color3.fromRGB(242, 242, 248),
+        Panel        = Color3.fromRGB(230, 230, 238),
+        Panel2       = Color3.fromRGB(220, 220, 232),
+        Element      = Color3.fromRGB(208, 208, 222),
+        ElementHover = Color3.fromRGB(196, 196, 212),
+        Accent       = Color3.fromRGB(110,  85, 220),
+        AccentDim    = Color3.fromRGB( 80,  60, 180),
+        AccentSoft   = Color3.fromRGB(170, 145, 255),
+        Text         = Color3.fromRGB( 30,  30,  40),
+        SubText      = Color3.fromRGB( 90,  90, 110),
+        DimText      = Color3.fromRGB(140, 140, 160),
+        Stroke       = Color3.fromRGB(180, 180, 195),
+        Good         = Color3.fromRGB( 60, 180, 110),
+        Warn         = Color3.fromRGB(220, 160,  40),
+        Bad          = Color3.fromRGB(220,  80,  80),
+    },
+}
+
+function M.Names()
+    local out = {}
+    for k in pairs(M.Themes) do table.insert(out, k) end
+    table.sort(out)
+    return out
+end
+
+function M.Apply(UI, Window, themeName)
+    local t = M.Themes[themeName]
+    if not (t and UI and UI.Theme) then return false end
+    for k, v in pairs(t) do
+        UI.Theme[k] = v
+    end
+    if Window and Window.SetAccent then Window:SetAccent(t.Accent) end
+    -- If UI exposes a registry-based recolor in the future, call it
+    -- here too. For now, accent updates live on existing window; new
+    -- components inherit the swapped THEME table.
+    if UI.UpdateColorsUsingRegistry then pcall(UI.UpdateColorsUsingRegistry, UI) end
+    return true
+end
+
+return M
+
+end
+
 _modules['src/config.lua'] = function()
 --[[
     Config persistence
@@ -3490,6 +3634,7 @@ local state = {
     TargetPanel    = true,
     OffscreenArrows= false,
     KeyOverlay     = false,
+    Keys           = {},        -- [label] = "KeyName"
 }
 
 local conns = {}
@@ -3761,6 +3906,84 @@ local function updateTargetPanel()
 end
 
 -- ============================================================
+-- Keybind overlay
+-- ============================================================
+
+local keyPanel, keyList
+
+local function buildKeyOverlay(gui)
+    if keyPanel then return end
+    keyPanel = Instance.new("Frame")
+    keyPanel.Name = "Keybinds"
+    keyPanel.AnchorPoint = Vector2.new(1, 0)
+    keyPanel.Position = UDim2.new(1, -12, 0, 40)
+    keyPanel.Size = UDim2.new(0, 180, 0, 0)
+    keyPanel.AutomaticSize = Enum.AutomaticSize.Y
+    keyPanel.BackgroundColor3 = THEME.Bg
+    keyPanel.BackgroundTransparency = 0.2
+    keyPanel.BorderSizePixel = 0
+    keyPanel.Visible = false
+    keyPanel.Parent = gui
+    Instance.new("UICorner", keyPanel).CornerRadius = UDim.new(0, 6)
+    local s = Instance.new("UIStroke"); s.Color = THEME.Accent; s.Thickness = 1; s.Parent = keyPanel
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, 0, 0, 18)
+    title.Font = Enum.Font.GothamBold
+    title.Text = "  hotkeys"
+    title.TextColor3 = THEME.Text
+    title.TextSize = 11
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = keyPanel
+
+    keyList = Instance.new("Frame")
+    keyList.BackgroundTransparency = 1
+    keyList.Position = UDim2.new(0, 0, 0, 20)
+    keyList.Size = UDim2.new(1, 0, 0, 0)
+    keyList.AutomaticSize = Enum.AutomaticSize.Y
+    keyList.Parent = keyPanel
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 1)
+    layout.Parent = keyList
+    local pad = Instance.new("UIPadding")
+    pad.PaddingLeft = UDim.new(0, 10); pad.PaddingRight = UDim.new(0, 10)
+    pad.PaddingBottom = UDim.new(0, 6)
+    pad.Parent = keyList
+end
+
+local function refreshKeyOverlay()
+    if not keyPanel then return end
+    keyPanel.Visible = state.KeyOverlay
+    if not state.KeyOverlay then return end
+    for _, c in ipairs(keyList:GetChildren()) do
+        if c:IsA("TextLabel") then c:Destroy() end
+    end
+    for label, key in pairs(state.Keys) do
+        local row = Instance.new("TextLabel")
+        row.BackgroundTransparency = 1
+        row.Size = UDim2.new(1, 0, 0, 13)
+        row.Font = Enum.Font.Code
+        row.TextSize = 10
+        row.TextColor3 = THEME.Sub
+        row.TextXAlignment = Enum.TextXAlignment.Left
+        row.Text = string.format("[%s] %s", key, label)
+        row.Parent = keyList
+    end
+end
+
+function M.RegisterKey(label, key)
+    state.Keys[label] = tostring(key)
+    refreshKeyOverlay()
+end
+
+function M.UnregisterKey(label)
+    state.Keys[label] = nil
+    refreshKeyOverlay()
+end
+
+-- ============================================================
 -- Off-screen arrows
 -- ============================================================
 
@@ -3859,6 +4082,18 @@ function M.Build(tab, ctx)
 
     local oa = tab:AddSection("Off-screen Arrows")
     oa:AddToggle("Enabled", false, function(v) state.OffscreenArrows = v end)
+
+    -- ----- Keybind overlay -----
+    buildKeyOverlay(gui)
+    local kb = tab:AddSection("Keybind Overlay")
+    kb:AddToggle("Show active hotkeys (top-right)", false, function(v)
+        state.KeyOverlay = v
+        refreshKeyOverlay()
+    end)
+    kb:AddLabel("Default bindings shown below; modules add their own as they boot.")
+    M.RegisterKey("Toggle UI", "RightCtrl")
+    M.RegisterKey("Console", "Backquote")
+    M.RegisterKey("Freecam", "RightShift")
 
     conns.render = RunService.RenderStepped:Connect(function()
         updateWatermark()
@@ -5609,6 +5844,604 @@ return M
 
 end
 
+_modules['src/modules/scripthub.lua'] = function()
+--[[
+    Scripthub — run / save / autoload third-party community scripts on
+    top of ROGBLOX. Pastes a URL or raw Lua, executes it, and remembers
+    favorites per-PlaceId so they auto-run next session.
+
+    Storage: ROGBLOX/scripthub/<placeId>.json
+        {favorites = {{name, url}, ...}, autorun = {name, ...}}
+]]
+
+local HttpService = game:GetService("HttpService")
+
+local M = {}
+local conns = {}
+
+local state = {
+    Favorites  = {},       -- {{name = ..., url = ...}}
+    Autorun    = {},       -- {name = true}
+    LastUrl    = "",
+    LastSource = "",
+}
+
+local STORE_DIR = "ROGBLOX/scripthub"
+local function storePath()
+    return STORE_DIR .. "/" .. tostring(game.PlaceId) .. ".json"
+end
+
+local hasFS = type(writefile) == "function" and type(readfile) == "function"
+              and type(isfile) == "function" and type(makefolder) == "function"
+
+local function ensureFolder()
+    if not hasFS then return false end
+    for _, p in ipairs({"ROGBLOX", STORE_DIR}) do
+        if isfolder and not isfolder(p) then pcall(makefolder, p) end
+    end
+    return true
+end
+
+local function loadStore()
+    if not hasFS then return end
+    if not (isfile and isfile(storePath())) then return end
+    local ok, raw = pcall(readfile, storePath())
+    if not ok then return end
+    local ok2, data = pcall(HttpService.JSONDecode, HttpService, raw)
+    if not ok2 then return end
+    state.Favorites = data.favorites or {}
+    state.Autorun   = data.autorun or {}
+end
+
+local function saveStore()
+    if not hasFS then return end
+    ensureFolder()
+    local data = {favorites = state.Favorites, autorun = state.Autorun}
+    local ok, encoded = pcall(HttpService.JSONEncode, HttpService, data)
+    if not ok then return end
+    pcall(writefile, storePath(), encoded)
+end
+
+local function runSource(source, label)
+    if type(source) ~= "string" or source == "" then return false, "empty source" end
+    local chunk, err = loadstring(source, "@" .. (label or "scripthub"))
+    if not chunk then return false, err end
+    local ok, runtimeErr = pcall(chunk)
+    return ok, runtimeErr
+end
+
+local function runUrl(url, label)
+    if type(url) ~= "string" or url == "" then return false, "empty url" end
+    local ok, source = pcall(game.HttpGet, game, url)
+    if not ok then return false, source end
+    state.LastSource = source
+    return runSource(source, label or url)
+end
+
+local function favoriteNames()
+    local list = {}
+    for _, fav in ipairs(state.Favorites) do table.insert(list, fav.name) end
+    if #list == 0 then table.insert(list, "(none)") end
+    return list
+end
+
+local function findFavorite(name)
+    for _, fav in ipairs(state.Favorites) do
+        if fav.name == name then return fav end
+    end
+    return nil
+end
+
+function M.Build(tab, ctx)
+    local Notify = ctx.Notify
+    loadStore()
+
+    local runSec = tab:AddSection("Run a script")
+    local pendingUrl, pendingName = "", ""
+    runSec:AddTextBox("URL (HttpGet)", "https://example.com/script.lua", function(v) pendingUrl = v end)
+    runSec:AddTextBox("Or paste raw source", "loadstring(...)()", function(v)
+        state.LastSource = v
+    end)
+    runSec:AddButton("Run URL", function()
+        local ok, err = runUrl(pendingUrl)
+        Notify:Send("Scripthub", ok and ("Ran " .. pendingUrl) or ("Error: " .. tostring(err)), 4)
+        state.LastUrl = pendingUrl
+    end)
+    runSec:AddButton("Run pasted source", function()
+        local ok, err = runSource(state.LastSource, "paste")
+        Notify:Send("Scripthub", ok and "Ran paste" or ("Error: " .. tostring(err)), 4)
+    end)
+
+    local favSec = tab:AddSection("Favorites (per game)")
+    favSec:AddTextBox("Save as name", "my favorite", function(v) pendingName = v end)
+    favSec:AddButton("Save current URL as favorite", function()
+        if pendingUrl == "" or pendingName == "" then
+            Notify:Send("Scripthub", "Need a URL + name", 3); return
+        end
+        -- replace if name exists
+        for i, fav in ipairs(state.Favorites) do
+            if fav.name == pendingName then table.remove(state.Favorites, i); break end
+        end
+        table.insert(state.Favorites, {name = pendingName, url = pendingUrl})
+        saveStore()
+        Notify:Send("Scripthub", "Saved '" .. pendingName .. "'", 3)
+    end)
+
+    local favPicked
+    local dropdown = favSec:AddDropdown("Favorite", favoriteNames(), favoriteNames()[1], function(v) favPicked = v end)
+    favSec:AddButton("Refresh list", function() dropdown:SetOptions(favoriteNames()) end)
+    favSec:AddButton("Run favorite", function()
+        local fav = findFavorite(favPicked)
+        if not fav then return end
+        local ok, err = runUrl(fav.url, fav.name)
+        Notify:Send("Scripthub", ok and ("Ran " .. fav.name) or ("Error: " .. tostring(err)), 4)
+    end)
+    favSec:AddButton("Delete favorite", function()
+        for i, fav in ipairs(state.Favorites) do
+            if fav.name == favPicked then
+                table.remove(state.Favorites, i)
+                state.Autorun[favPicked] = nil
+                saveStore()
+                dropdown:SetOptions(favoriteNames())
+                Notify:Send("Scripthub", "Deleted '" .. favPicked .. "'", 3)
+                break
+            end
+        end
+    end)
+
+    local autoSec = tab:AddSection("Autorun on next inject")
+    autoSec:AddButton("Toggle autorun for selected favorite", function()
+        if not favPicked or favPicked == "(none)" then return end
+        state.Autorun[favPicked] = not state.Autorun[favPicked] or nil
+        saveStore()
+        Notify:Send("Scripthub", "Autorun '" .. favPicked .. "' = " ..
+            tostring(state.Autorun[favPicked] == true), 3)
+    end)
+    autoSec:AddButton("Run all autorun favorites now", function()
+        local count = 0
+        for _, fav in ipairs(state.Favorites) do
+            if state.Autorun[fav.name] then
+                pcall(runUrl, fav.url, fav.name)
+                count = count + 1
+            end
+        end
+        Notify:Send("Scripthub", "Ran " .. count .. " autorun scripts", 3)
+    end)
+    autoSec:AddButton("Clear all autorun flags", function()
+        state.Autorun = {}; saveStore()
+        Notify:Send("Scripthub", "Cleared autorun list", 3)
+    end)
+
+    -- Best-effort: kick off autoruns at boot (deferred so the rest of
+    -- the hub finishes initializing first)
+    task.defer(function()
+        task.wait(2)
+        for _, fav in ipairs(state.Favorites) do
+            if state.Autorun[fav.name] then
+                pcall(runUrl, fav.url, fav.name)
+            end
+        end
+    end)
+end
+
+function M.Unload()
+    for _, c in pairs(conns) do pcall(function() c:Disconnect() end) end
+    conns = {}
+end
+
+M.State = state
+return M
+
+end
+
+_modules['src/modules/stats.lua'] = function()
+--[[
+    Session stats tracker.
+
+    Tracks per-session metrics derived from the local Humanoid:
+        - Deaths    : Humanoid.Died fires
+        - Respawns  : new character spawns
+        - Damage taken : drops in Humanoid.Health (only when negative delta)
+        - HP healed   : positive deltas
+        - Distance traveled : sum of root.Position deltas
+        - Session time : seconds since module init
+        - Peak walkspeed observed
+        - Currently equipped tool name
+
+    Renders an overlay panel that the user can move and toggle. Stats
+    persist across respawns (only reset when the player rejoins or
+    clicks Reset).
+]]
+
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local M = {}
+local conns = {}
+
+local stats = {
+    Deaths        = 0,
+    Respawns      = 0,
+    DamageTaken   = 0,
+    HpHealed      = 0,
+    Distance      = 0,
+    SessionStart  = tick(),
+    PeakSpeed     = 0,
+    CurrentTool   = "",
+    LastHp        = nil,
+    LastPos       = nil,
+}
+
+local panel, labels = nil, {}
+
+local THEME = {
+    Bg    = Color3.fromRGB(14, 14, 20),
+    Panel = Color3.fromRGB(22, 22, 32),
+    Text  = Color3.fromRGB(235, 235, 245),
+    Sub   = Color3.fromRGB(150, 150, 165),
+    Accent= Color3.fromRGB(140, 100, 255),
+    Stroke= Color3.fromRGB(48, 48, 64),
+}
+
+local state = {
+    Enabled = false,
+}
+
+local function makeGui()
+    local existing = (gethui and gethui() or game:GetService("CoreGui")):FindFirstChild("ROGBLOX_Stats")
+    if existing then return existing end
+    local g = Instance.new("ScreenGui")
+    g.Name = "ROGBLOX_Stats"
+    g.ResetOnSpawn = false
+    g.IgnoreGuiInset = true
+    g.Enabled = false
+    if syn and syn.protect_gui then syn.protect_gui(g) end
+    g.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+    return g
+end
+
+local function buildPanel()
+    local gui = makeGui()
+    if panel then return end
+
+    panel = Instance.new("Frame")
+    panel.AnchorPoint = Vector2.new(0, 1)
+    panel.Position = UDim2.new(0, 12, 1, -12)
+    panel.Size = UDim2.new(0, 220, 0, 160)
+    panel.BackgroundColor3 = THEME.Bg
+    panel.BackgroundTransparency = 0.1
+    panel.BorderSizePixel = 0
+    panel.Parent = gui
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 6)
+    local s = Instance.new("UIStroke"); s.Color = THEME.Stroke; s.Thickness = 1; s.Parent = panel
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundColor3 = THEME.Panel
+    title.BorderSizePixel = 0
+    title.Size = UDim2.new(1, 0, 0, 22)
+    title.Font = Enum.Font.GothamBold
+    title.Text = "  Session stats"
+    title.TextColor3 = THEME.Text
+    title.TextSize = 12
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = panel
+    Instance.new("UICorner", title).CornerRadius = UDim.new(0, 6)
+
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 2)
+    layout.Parent = panel
+    local pad = Instance.new("UIPadding")
+    pad.PaddingTop = UDim.new(0, 28)
+    pad.PaddingLeft = UDim.new(0, 10)
+    pad.PaddingRight = UDim.new(0, 10)
+    pad.Parent = panel
+
+    local function row(name)
+        local lbl = Instance.new("TextLabel")
+        lbl.BackgroundTransparency = 1
+        lbl.Size = UDim2.new(1, 0, 0, 14)
+        lbl.Font = Enum.Font.Code
+        lbl.TextColor3 = THEME.Sub
+        lbl.TextSize = 11
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Text = name
+        lbl.Parent = panel
+        return lbl
+    end
+    labels.session    = row("session 0s")
+    labels.deaths     = row("deaths 0")
+    labels.respawns   = row("respawns 0")
+    labels.damage     = row("damage taken 0")
+    labels.healed     = row("hp healed 0")
+    labels.distance   = row("distance 0m")
+    labels.peakSpeed  = row("peak speed 0")
+    labels.tool       = row("tool -")
+end
+
+local function attach(char)
+    if not char then return end
+    local hum = char:WaitForChild("Humanoid", 3)
+    local hrp = char:WaitForChild("HumanoidRootPart", 3)
+    if not hum or not hrp then return end
+    stats.LastHp = hum.Health
+    stats.LastPos = hrp.Position
+
+    if conns.died then conns.died:Disconnect() end
+    conns.died = hum.Died:Connect(function()
+        stats.Deaths = stats.Deaths + 1
+    end)
+
+    if conns.hpChanged then conns.hpChanged:Disconnect() end
+    conns.hpChanged = hum.HealthChanged:Connect(function(newHp)
+        if stats.LastHp then
+            local delta = newHp - stats.LastHp
+            if delta < 0 then
+                stats.DamageTaken = stats.DamageTaken - delta
+            elseif delta > 0 then
+                stats.HpHealed = stats.HpHealed + delta
+            end
+        end
+        stats.LastHp = newHp
+    end)
+end
+
+local function detect()
+    local lp = Players.LocalPlayer
+    if not lp then return end
+    if lp.Character then attach(lp.Character) end
+    conns.charAdded = lp.CharacterAdded:Connect(function(c)
+        stats.Respawns = stats.Respawns + 1
+        attach(c)
+    end)
+end
+
+local function tick_(dt)
+    if not state.Enabled then panel.Visible = false; return end
+    panel.Visible = true
+    local lp = Players.LocalPlayer
+    local char = lp and lp.Character
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+
+    if hrp and stats.LastPos then
+        local d = (hrp.Position - stats.LastPos).Magnitude
+        if d < 50 then  -- ignore teleports / respawns
+            stats.Distance = stats.Distance + d
+        end
+        stats.LastPos = hrp.Position
+    elseif hrp then
+        stats.LastPos = hrp.Position
+    end
+    if hum then
+        if hum.WalkSpeed > stats.PeakSpeed then stats.PeakSpeed = hum.WalkSpeed end
+        local tool
+        for _, t in ipairs(char:GetChildren()) do
+            if t:IsA("Tool") then tool = t.Name; break end
+        end
+        stats.CurrentTool = tool or "-"
+    end
+
+    local elapsed = math.floor(tick() - stats.SessionStart)
+    local mins = math.floor(elapsed / 60)
+    local secs = elapsed % 60
+    labels.session.Text   = string.format("session   %dm%02ds", mins, secs)
+    labels.deaths.Text    = string.format("deaths    %d", stats.Deaths)
+    labels.respawns.Text  = string.format("respawns  %d", stats.Respawns)
+    labels.damage.Text    = string.format("damage    %d", math.floor(stats.DamageTaken))
+    labels.healed.Text    = string.format("healed    %d", math.floor(stats.HpHealed))
+    labels.distance.Text  = string.format("distance  %dm", math.floor(stats.Distance))
+    labels.peakSpeed.Text = string.format("peak ws   %d", math.floor(stats.PeakSpeed))
+    labels.tool.Text      = "tool      " .. stats.CurrentTool
+end
+
+function M.Build(tab, ctx)
+    buildPanel()
+    detect()
+
+    local sec = tab:AddSection("Session Stats")
+    sec:AddToggle("Show overlay", false, function(v)
+        state.Enabled = v
+        if panel.Parent then panel.Parent.Enabled = v end
+    end)
+    sec:AddButton("Reset stats", function()
+        stats.Deaths = 0; stats.Respawns = 0
+        stats.DamageTaken = 0; stats.HpHealed = 0
+        stats.Distance = 0; stats.PeakSpeed = 0
+        stats.SessionStart = tick()
+    end)
+    sec:AddButton("Print to console", function()
+        print(string.format(
+            "[ROGBLOX stats] session %ds  deaths %d  respawns %d  damage %d  healed %d  distance %dm  peakws %d",
+            math.floor(tick() - stats.SessionStart),
+            stats.Deaths, stats.Respawns,
+            math.floor(stats.DamageTaken), math.floor(stats.HpHealed),
+            math.floor(stats.Distance), math.floor(stats.PeakSpeed)))
+    end)
+
+    conns.render = RunService.RenderStepped:Connect(tick_)
+end
+
+function M.Unload()
+    for _, c in pairs(conns) do pcall(function() c:Disconnect() end) end
+    conns = {}
+    if panel and panel.Parent then panel.Parent:Destroy() end
+    panel, labels = nil, {}
+end
+
+M.Stats = stats
+M.State = state
+return M
+
+end
+
+_modules['src/modules/macro.lua'] = function()
+--[[
+    Macro recorder / playback.
+
+    Records keyboard keypresses with timing, plays them back via the
+    UNC input API (keypress / keyrelease). Useful for repeating combos,
+    farming inputs, or running scripted action sequences without
+    holding the keys manually.
+
+    Limitations:
+        - Only captures Roblox-window key events through
+          UserInputService (no global hotkey grab).
+        - Playback uses keypress/keyrelease if the executor exposes
+          them; otherwise falls back to VirtualInputManager.
+
+    Storage: keeps macros in memory + optional save via SaveManager.
+]]
+
+local UserInputService    = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local RunService          = game:GetService("RunService")
+
+local M = {}
+
+local conns = {}
+local recording = false
+local recordStart = 0
+local currentRecord = {}     -- {{kind, key, at}, ...}
+local saved = {}             -- [name] = {events = ..., totalSec = ...}
+local pickedMacro = nil
+local playing = false
+
+local function pressKey(key, down)
+    if not key then return end
+    local code
+    if typeof(key) == "EnumItem" then code = key end
+    if not code then return end
+    pcall(function()
+        if down then
+            if keypress then keypress(code)
+            else VirtualInputManager:SendKeyEvent(true, code.Name, false, game) end
+        else
+            if keyrelease then keyrelease(code)
+            else VirtualInputManager:SendKeyEvent(false, code.Name, false, game) end
+        end
+    end)
+end
+
+local function startRecording()
+    if recording then return end
+    recording = true
+    currentRecord = {}
+    recordStart = tick()
+    conns.recDown = UserInputService.InputBegan:Connect(function(input, processed)
+        if processed then return end
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            table.insert(currentRecord, {kind = "down", key = input.KeyCode, at = tick() - recordStart})
+        end
+    end)
+    conns.recUp = UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            table.insert(currentRecord, {kind = "up", key = input.KeyCode, at = tick() - recordStart})
+        end
+    end)
+end
+
+local function stopRecording()
+    if not recording then return end
+    recording = false
+    if conns.recDown then conns.recDown:Disconnect(); conns.recDown = nil end
+    if conns.recUp   then conns.recUp:Disconnect();   conns.recUp   = nil end
+end
+
+local function play(macro, opts)
+    if not macro or #macro.events == 0 then return end
+    opts = opts or {}
+    local speed = opts.Speed or 1
+    local loops = opts.Loops or 1
+    playing = true
+    task.spawn(function()
+        for n = 1, loops do
+            if not playing then break end
+            local base = tick()
+            for _, ev in ipairs(macro.events) do
+                if not playing then break end
+                local targetAt = base + (ev.at / speed)
+                local now = tick()
+                if targetAt > now then task.wait(targetAt - now) end
+                pressKey(ev.key, ev.kind == "down")
+            end
+        end
+        playing = false
+    end)
+end
+
+local function macroNames()
+    local out = {}
+    for name in pairs(saved) do table.insert(out, name) end
+    table.sort(out)
+    if #out == 0 then table.insert(out, "(none)") end
+    return out
+end
+
+function M.Build(tab, ctx)
+    local Notify = ctx.Notify
+
+    local rec = tab:AddSection("Record")
+    rec:AddButton("Start recording", function()
+        startRecording()
+        Notify:Send("Macro", "Recording keystrokes...", 2)
+    end)
+    rec:AddButton("Stop recording", function()
+        stopRecording()
+        Notify:Send("Macro", "Stopped. " .. #currentRecord .. " events captured", 3)
+    end)
+    local pendingName = ""
+    rec:AddTextBox("Save as name", "my-macro", function(v) pendingName = v end)
+    local dropdown
+    rec:AddButton("Save current", function()
+        if pendingName == "" or #currentRecord == 0 then
+            Notify:Send("Macro", "Need a name and recorded events", 3); return
+        end
+        local total = currentRecord[#currentRecord] and currentRecord[#currentRecord].at or 0
+        saved[pendingName] = {events = currentRecord, totalSec = total}
+        if dropdown then dropdown:SetOptions(macroNames()) end
+        Notify:Send("Macro", string.format("Saved '%s' (%d events, %.1fs)",
+            pendingName, #currentRecord, total), 3)
+        currentRecord = {}
+    end)
+
+    local play_ = tab:AddSection("Playback")
+    dropdown = play_:AddDropdown("Macro", macroNames(), macroNames()[1], function(v) pickedMacro = v end)
+    play_:AddButton("Refresh", function() dropdown:SetOptions(macroNames()) end)
+    local speed = 1.0
+    local loops = 1
+    play_:AddSlider("Speed", 0.1, 5, 1, function(v) speed = v end, {Decimals = 2})
+    play_:AddSlider("Loops", 1, 50, 1, function(v) loops = math.floor(v) end)
+    play_:AddButton("Play", function()
+        local m = saved[pickedMacro]
+        if not m then Notify:Send("Macro", "No macro selected", 2); return end
+        play(m, {Speed = speed, Loops = loops})
+        Notify:Send("Macro", "Playing " .. pickedMacro, 2)
+    end)
+    play_:AddButton("Stop", function()
+        playing = false
+    end)
+    play_:AddButton("Delete selected", function()
+        if pickedMacro and saved[pickedMacro] then
+            saved[pickedMacro] = nil
+            dropdown:SetOptions(macroNames())
+            Notify:Send("Macro", "Deleted", 2)
+        end
+    end)
+end
+
+function M.Unload()
+    stopRecording()
+    playing = false
+    for _, c in pairs(conns) do pcall(function() c:Disconnect() end) end
+    conns = {}
+end
+
+M.Saved = saved
+return M
+
+end
+
 _modules['src/modules/misc.lua'] = function()
 --[[
     Misc module — Anti-AFK, FPS cap, chat spam, anti-fling, freecam.
@@ -5807,10 +6640,11 @@ local BASE = "https://raw.githubusercontent.com/mkultra110/rogblox/" .. BRANCH .
 
 -- fetch provided by bundler
 -- libraries first
-local UI          = fetch("src/library/ui.lua")
-local Notify      = fetch("src/library/notify.lua")
-local SaveManager = fetch("src/library/savemanager.lua")
-local Config      = fetch("src/config.lua")
+local UI           = fetch("src/library/ui.lua")
+local Notify       = fetch("src/library/notify.lua")
+local SaveManager  = fetch("src/library/savemanager.lua")
+local ThemeManager = fetch("src/library/thememanager.lua")
+local Config       = fetch("src/config.lua")
 
 -- shared utilities
 local PlayersUtil = fetch("src/utils/players.lua")
@@ -5829,6 +6663,9 @@ local Farm       = fetch("src/modules/autofarm.lua")
 local Games      = fetch("src/modules/games.lua")
 local PlayerList = fetch("src/modules/playerlist.lua")
 local Console    = fetch("src/modules/console.lua")
+local Scripthub  = fetch("src/modules/scripthub.lua")
+local Stats      = fetch("src/modules/stats.lua")
+local Macro      = fetch("src/modules/macro.lua")
 local Misc       = fetch("src/modules/misc.lua")
 
 local Window = UI:CreateWindow({
@@ -5862,6 +6699,9 @@ Farm.Build(      Window:AddTab("Auto"),       ctx)
 Games.Build(     Window:AddTab("Games"),      ctx)
 PlayerList.Build(Window:AddTab("Players"),    ctx)
 Console.Build(   Window:AddTab("Console"),    ctx)
+Scripthub.Build( Window:AddTab("Scripthub"),  ctx)
+Stats.Build(     Window:AddTab("Stats"),      ctx)
+Macro.Build(     Window:AddTab("Macro"),      ctx)
 Misc.Build(      Window:AddTab("Misc"),       ctx)
 
 local SettingsTab = Window:AddTab("Settings")
@@ -5880,6 +6720,9 @@ cfgSection:AddButton("Reset", function()
 end)
 
 local themeSection = SettingsTab:AddSection("Theme")
+themeSection:AddDropdown("Theme preset", ThemeManager.Names(), "Default", function(name)
+    ThemeManager.Apply(UI, Window, name)
+end)
 themeSection:AddColorPicker("Accent color", UI.Theme.Accent, function(c) Window:SetAccent(c) end)
 
 local profilesSection = SettingsTab:AddSection("Profiles (named configs)")
@@ -5931,10 +6774,13 @@ _G.ROGBLOX = {
         Games      = Games,
         PlayerList = PlayerList,
         Console    = Console,
+        Scripthub  = Scripthub,
+        Stats      = Stats,
+        Macro      = Macro,
         Misc       = Misc,
     },
     Unload = function()
-        for _, mod in ipairs({Aimbot, ESP, Combat, Movement, Teleport, HUD, World, Farm, Games, PlayerList, Console, Misc}) do
+        for _, mod in ipairs({Aimbot, ESP, Combat, Movement, Teleport, HUD, World, Farm, Games, PlayerList, Console, Scripthub, Stats, Macro, Misc}) do
             if mod.Unload then pcall(mod.Unload) end
         end
         Window:Destroy()

