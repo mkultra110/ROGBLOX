@@ -14,12 +14,22 @@
 //   cmake --build build --config Release
 //   Outputs: cpp\build\loader\Release\rogblox-loader.exe
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
+// WIN32_LEAN_AND_MEAN and NOMINMAX are set globally via the top-level
+// CMakeLists.txt - don't redefine them here (causes C4005 warnings on /W4).
+
+// Define UNICODE before any Windows headers so the *W APIs are picked.
+#ifndef UNICODE
 #define UNICODE
+#endif
+#ifndef _UNICODE
 #define _UNICODE
+#endif
 
 #include <Windows.h>
+// objbase.h brings in IUnknown / IStream which Gdiplus headers depend on.
+// WIN32_LEAN_AND_MEAN strips <ole2.h> from Windows.h so we need this
+// explicit include or every Gdiplus header errors out.
+#include <objbase.h>
 #include <gdiplus.h>
 #include <dwmapi.h>
 #include <shlwapi.h>
