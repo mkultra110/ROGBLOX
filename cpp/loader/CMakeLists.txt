@@ -2,19 +2,19 @@
 # Bundles the Lua script as an embedded byte array at build time so
 # the .exe is fully self-contained (no external files needed).
 
-# Step 1: convert dist/rogblox.lua to a C array at configure time.
 set(BUNDLE_LUA "${CMAKE_SOURCE_DIR}/../dist/rogblox.lua")
-set(BUNDLE_OUT "${CMAKE_CURRENT_BINARY_DIR}/bundle_data.cpp")
+set(BUNDLE_HPP "${CMAKE_CURRENT_BINARY_DIR}/bundle_data.hpp")
+set(BUNDLE_CPP "${CMAKE_CURRENT_BINARY_DIR}/bundle_data.cpp")
+set(EMBED_PY   "${CMAKE_CURRENT_SOURCE_DIR}/embed_bundle.py")
 
-# CMake -E lets us write a tiny inline script that reads the lua file
-# and emits a C++ source with the bytes as a literal initializer.
-file(READ "${BUNDLE_LUA}" BUNDLE_HEX HEX)
-string(LENGTH "${BUNDLE_HEX}" BUNDLE_HEXLEN)
-math(EXPR BUNDLE_BYTES "${BUNDLE_HEXLEN} / 2")
+if(NOT EXISTS "${BUNDLE_LUA}")
+    message(FATAL_ERROR
+        "Lua bundle not found: ${BUNDLE_LUA}\n"
+        "Run 'python bundle.py' from the repo root first, or use build-exe.bat which does it for you.")
+endif()
 
-# Generate a header + source with the embedded bytes
-set(BUNDLE_HEADER "${CMAKE_CURRENT_BINARY_DIR}/bundle_data.hpp")
-file(WRITE "${BUNDLE_HEADER}"
+# Write the header once - it never changes
+file(WRITE "${BUNDLE_HPP}"
 "#pragma once
 #include <cstddef>
 extern \"C\" {
@@ -23,29 +23,26 @@ extern const size_t        ROGBLOX_BUNDLE_SIZE;
 }
 ")
 
-# Build the .cpp by chunking the hex string into 16-byte lines so the
-# resulting source compiles in reasonable time.
-set(BUNDLE_SRC "#include \"bundle_data.hpp\"\nextern \"C\" const unsigned char ROGBLOX_BUNDLE[] = {\n")
-set(_idx 0)
-set(_line "    ")
-math(EXPR _last_idx "${BUNDLE_BYTES} - 1")
-while(_idx LESS BUNDLE_BYTES)
-    math(EXPR _pos "${_idx} * 2")
-    string(SUBSTRING "${BUNDLE_HEX}" ${_pos} 2 _byte)
-    set(_line "${_line}0x${_byte},")
-    math(EXPR _idx "${_idx} + 1")
-    math(EXPR _mod "${_idx} % 16")
-    if(_mod EQUAL 0 OR _idx EQUAL BUNDLE_BYTES)
-        set(BUNDLE_SRC "${BUNDLE_SRC}${_line}\n")
-        set(_line "    ")
-    endif()
-endwhile()
-set(BUNDLE_SRC "${BUNDLE_SRC}};\nextern \"C\" const size_t ROGBLOX_BUNDLE_SIZE = ${BUNDLE_BYTES};\n")
-file(WRITE "${BUNDLE_OUT}" "${BUNDLE_SRC}")
+# Locate a Python interpreter for the embedding step
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(NOT Python3_EXECUTABLE)
+    # Fall back to plain `python` on PATH (windows-latest has it)
+    find_program(Python3_EXECUTABLE NAMES python3 python REQUIRED)
+endif()
+
+# Generate the embedded bundle .cpp via a custom command that re-runs
+# whenever the bundle changes. Tied as a source dep of the loader target.
+add_custom_command(
+    OUTPUT  "${BUNDLE_CPP}"
+    COMMAND "${Python3_EXECUTABLE}" "${EMBED_PY}" "${BUNDLE_LUA}" "${BUNDLE_CPP}"
+    DEPENDS "${BUNDLE_LUA}" "${EMBED_PY}"
+    COMMENT "Embedding ${BUNDLE_LUA} into bundle_data.cpp"
+    VERBATIM
+)
 
 add_executable(rogblox-loader WIN32
     main.cpp
-    "${BUNDLE_OUT}"
+    "${BUNDLE_CPP}"
 )
 
 target_include_directories(rogblox-loader PRIVATE
@@ -64,6 +61,7 @@ target_link_libraries(rogblox-loader PRIVATE
     advapi32.lib
     winhttp.lib
     msimg32.lib
+    comctl32.lib
 )
 
 set_target_properties(rogblox-loader PROPERTIES
