@@ -1,63 +1,61 @@
-# ROGBLOX pro upgrade — todo
+# ROGBLOX — comprehensive audit, fix, beautify, expand
 
-Brief: make the aimbot, teleport system, HUD, and menu professional-grade.
+Source of audit: sub-agent verifier (see commit 836f33d).
+Additional spec from LO: "test everything, audit everything, fix
+everything; loader and cheat must be visually super beautiful."
 
-## Plan
+## Bugs (verifier-flagged)
 
-### 1. UI library v2 (src/library/ui.lua)
-- [x] New theme — accent customizable, smoother palette
-- [x] Title bar with accent strip, subtitle, search box, min/close buttons
-- [x] Resizable window via corner grip
-- [x] Draggable
-- [x] Smooth tween transitions on tab/state changes
-- [x] Active-tab indicator strip
-- [x] Collapsible sections
-- [x] Live label search filter across all components
-- [x] New components: Slider with input box, multi-select Dropdown, Color Picker, Divider
-- [x] All components track Label + Frame so search can filter them
+- [x] hud.lua:189 — crosshair outline indexing broken (`idx + 0` no-op)
+- [x] movement.lua:51 — dead conditional empty body
+- [x] autofarm.lua:38 — precedence bug: `model:FindFirstChild` called when `model` nil
+- [x] utils/drawing.lua:46 — fallback Set Color reads TextColor3 on Frame
 
-### 2. HUD module (src/modules/hud.lua) — NEW
-- [x] Watermark (top-left): FPS, ping, username, time, brand
-- [x] Crosshair: Plus / Dot / Circle, color, size, gap, thickness, outline
-- [x] Target lock panel: name, hp bar, distance, target metadata
-- [x] Off-screen arrows for enemies outside the viewport
-- [x] Drawing-API based, ScreenGui fallback
+## Concerns / leaks (verifier-flagged)
 
-### 3. Aimbot rewrite (src/modules/aimbot.lua)
-- [x] Target modes: Crosshair / Mouse / Distance / LowestHP
-- [x] Multi-part priority list (Head > HRP > UpperTorso default)
-- [x] Prediction (lead via AssemblyLinearVelocity * t)
-- [x] Visibility (Workspace:Raycast LOS)
-- [x] Smoothing curves: Linear / Sine / Exponential
-- [x] Sticky lock + auto-switch on invalid target
-- [x] Friend list parser (comma-separated names)
-- [x] FOV circle (color, filled/outline, snap line preview)
-- [x] Trigger bot with delay and pixel window
-- [x] Publishes M.LockedTarget for HUD panel
+- [x] combat_extras.lua — silent-aim metatable hook never restored / re-applies
+- [x] combat_extras.lua — hitbox/god/antiaim conns + kill-aura task not cleaned up
+- [x] autofarm.lua — two unbounded `while task.wait` loops survive Unload
+- [x] misc.lua — chat-spam loop survives Unload
+- [x] misc.lua — freecam keybind desyncs from underlying state
+- [x] world.lua — TextChatService.OnIncomingMessage never restored
+- [x] ui.lua — AddLabel/AddDivider don't call trackComponent (search-filter inconsistency)
+- [x] ui.lua — multi-dropdown skips initial callback
+- [x] players.lua — HasLOS mutates caller's ignore list
+- [x] players.lua — tortured `camera.CFrame.p and {} or camera` expression
 
-### 4. Teleport rewrite (src/modules/teleport.lua)
-- [ ] Live player list (refresh, distance, HP shown)
-- [ ] 10 named waypoint slots — save / load / clear / rename
-- [ ] TP modes: To / Behind / In front / Above / Below / Aim TP
-- [ ] Pathwalk (smooth interp over N seconds instead of instant)
-- [ ] TP history (back / forward stack)
-- [ ] Click-TP retained (Ctrl + click)
-- [ ] Server hop + rejoin retained
+## Visual beautification
 
-### 5. Wiring (src/main.lua)
-- [ ] Add HUD tab, build before Aimbot so HUD reads aimbot.LockedTarget
-- [ ] Pass aimbot module into HUD context (or do it via the shared M.LockedTarget pattern)
-- [ ] Keep ordering: Aimbot / Visuals / Combat+ / Movement / Teleport / HUD / World / Auto / Misc / Settings
+- [ ] **Loader (launch.ps1)** — rewrite in WPF
+  - Borderless window, rounded corners, gradient background
+  - Big logo with gradient text fill
+  - Glowing accent button with hover state + press animation
+  - Animated status text with check icons
+  - Drop shadow
+- [ ] **In-game UI (ui.lua)** — visual upgrade
+  - Background gradient on window (dark to very dark)
+  - Title bar gradient + soft inner glow
+  - Accent strip glow effect (UIStroke + tween)
+  - Section headers with gradient underline
+  - Slider fill gradient
+  - Toggle: smoother spring animation, glow when on
+  - Notifications: slide-in from right with bounce
+  - Tab indicator: pulse on selection
+  - Optional blur backdrop (DepthOfFieldEffect / BlurEffect on Lighting)
+  - Better fonts (`GothamSSm` if available, fallback `Gotham`)
 
-### 6. Verification
-- [ ] All Lua files load without syntax errors (lua -p as best-effort)
-- [ ] Loader URL produces no 404 on the pushed branch
-- [ ] Cross-reference module API signatures match between aimbot.M.LockedTarget and hud reads
+## v0.4 features (matching/exceeding premium hubs)
 
-### 7. Commit / push / PR
-- [ ] git commit with clear summary
-- [ ] git push -u origin claude/create-git-metadata-rfQ6g
-- [ ] Note: PR cannot be opened until base branch exists on repo
+- [ ] Aimbot: Whitelist (TargetList), explicit Toggle mode (vs Hold), offset modes (Static/Dynamic/Auto), camera shake option, resolver for spinning targets
+- [ ] ESP: Drawing object pool, Skeleton ESP (R6/R15 bone tables)
+- [ ] HUD: Keybind list overlay
+- [ ] Per-PlaceId profile auto-load on join
+
+## Verification
+
+- [ ] Re-spawn audit agent after fixes land for a second pass
+- [ ] Manual sanity check on cross-references after UI edits
 
 ## Review
-_To be filled in after execution._
+
+_to be filled in after this batch._
