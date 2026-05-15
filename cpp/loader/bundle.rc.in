@@ -1,0 +1,8 @@
+// Embeds dist/rogblox.lua as a binary Windows resource. The loader
+// reads this back via FindResource/LoadResource at runtime.
+//
+// Resource ID 100 = the bundled ROGBLOX Lua script.
+// The absolute path is filled in by CMake's configure_file at build
+// time so rc.exe finds the bundle regardless of working directory.
+
+100 RCDATA "@BUNDLE_LUA_RC@"

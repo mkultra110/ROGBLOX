@@ -36,8 +36,6 @@
 #include <thread>
 #include <vector>
 
-#include "bundle_data.hpp"
-
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "shlwapi.lib")
@@ -46,6 +44,17 @@
 
 namespace fs = std::filesystem;
 using namespace Gdiplus;
+
+// The Lua bundle is embedded as a Windows RCDATA resource at id 100.
+// See cpp/loader/bundle.rc.
+static const unsigned char* get_bundle(size_t& size_out) {
+    HRSRC hres = FindResourceW(nullptr, MAKEINTRESOURCEW(100), RT_RCDATA);
+    if (!hres) { size_out = 0; return nullptr; }
+    HGLOBAL hg = LoadResource(nullptr, hres);
+    if (!hg) { size_out = 0; return nullptr; }
+    size_out = SizeofResource(nullptr, hres);
+    return (const unsigned char*)LockResource(hg);
+}
 
 // ---------- Constants ----------
 
@@ -125,14 +134,17 @@ static std::vector<fs::path> detect_installed_executors() {
 
 static std::vector<std::wstring> install_bundle() {
     std::vector<std::wstring> installed;
+    size_t bundle_size = 0;
+    const unsigned char* bundle = get_bundle(bundle_size);
+    if (!bundle || bundle_size == 0) return installed;
     for (auto& p : detect_installed_executors()) {
         std::error_code ec;
         fs::create_directories(p, ec);
         fs::path target = p / L"rogblox.lua";
         std::ofstream f(target, std::ios::binary | std::ios::trunc);
         if (!f) continue;
-        f.write(reinterpret_cast<const char*>(ROGBLOX_BUNDLE),
-                (std::streamsize)ROGBLOX_BUNDLE_SIZE);
+        f.write(reinterpret_cast<const char*>(bundle),
+                (std::streamsize)bundle_size);
         if (f) {
             // Use the executor folder name (one above autoexec) as the label
             installed.push_back(p.parent_path().filename().wstring());
